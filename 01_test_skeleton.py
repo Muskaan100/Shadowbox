@@ -78,15 +78,18 @@ while cap.isOpened():
 
         # Draw glowing joints
         for idx, (px, py) in pts.items():
-            # Highlight wrists (15: Left Wrist, 16: Right Wrist) with glowing Red/Orange
-            if idx in (15, 16):
-                cv2.circle(frame, (px, py), 12, (0, 0, 255), -1)
-                cv2.circle(frame, (px, py), 16, (0, 165, 255), 2)
-            # Highlight head/nose (0)
+            # Highlight wrists (15: Left Wrist, 16: Right Wrist) with glowing boxing gloves
+            if idx == 15:
+                cv2.circle(frame, (px, py), 28, (255, 200, 0), -1)  # Left hand Cyan
+                cv2.circle(frame, (px, py), 34, (255, 255, 255), 2)
+            elif idx == 16:
+                cv2.circle(frame, (px, py), 28, (0, 80, 255), -1)   # Right hand Orange/Red
+                cv2.circle(frame, (px, py), 34, (255, 255, 255), 2)
             elif idx == 0:
-                cv2.circle(frame, (px, py), 8, (0, 255, 0), -1)
+                # Keep face clear without distracting nose dots
+                pass
             else:
-                cv2.circle(frame, (px, py), 4, (0, 255, 255), -1)
+                cv2.circle(frame, (px, py), 3, (0, 255, 255), -1)
 
         # Display detected wrist coordinates
         if 15 in pts and 16 in pts:

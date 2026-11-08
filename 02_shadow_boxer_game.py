@@ -62,7 +62,8 @@ last_pose_time = time.time()
 
 # Target data: (x, y, radius, hand_type: 'LEFT' or 'RIGHT', spawn_time)
 target = None
-TARGET_RADIUS = 42
+TARGET_RADIUS = 45
+GLOVE_RADIUS = 35
 
 # Laser Dodge Hazard
 laser_active = False
@@ -166,17 +167,23 @@ while cap.isOpened():
         prev_wrist_l = wrist_l
         prev_wrist_r = wrist_r
 
-        # Draw glowing boxing gloves on wrists
-        cv2.circle(frame, wrist_l, 18, (255, 200, 0), -1)  # Left glove Cyan/Blue
-        cv2.circle(frame, wrist_l, 22, (255, 255, 255), 2)
-        cv2.putText(frame, "L", (wrist_l[0] - 6, wrist_l[1] + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
+        # Draw stylish arcade boxing gloves on wrists (significantly larger!)
+        # Left Glove (Cyan / Neon Blue)
+        cv2.circle(frame, wrist_l, GLOVE_RADIUS + 6, (255, 255, 255), 2)  # Outer glow ring
+        cv2.circle(frame, wrist_l, GLOVE_RADIUS, (255, 210, 0), -1)        # Solid punch glove
+        cv2.circle(frame, wrist_l, GLOVE_RADIUS - 10, (255, 240, 120), -1) # Inner highlight
+        cv2.putText(frame, "L", (wrist_l[0] - 10, wrist_l[1] + 8),
+                    cv2.FONT_HERSHEY_DUPLEX, 0.7, (20, 20, 20), 2)
 
-        cv2.circle(frame, wrist_r, 18, (0, 80, 255), -1)   # Right glove Orange/Red
-        cv2.circle(frame, wrist_r, 22, (255, 255, 255), 2)
-        cv2.putText(frame, "R", (wrist_r[0] - 6, wrist_r[1] + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+        # Right Glove (Flame Orange / Neon Red)
+        cv2.circle(frame, wrist_r, GLOVE_RADIUS + 6, (255, 255, 255), 2)  # Outer glow ring
+        cv2.circle(frame, wrist_r, GLOVE_RADIUS, (0, 80, 255), -1)         # Solid punch glove
+        cv2.circle(frame, wrist_r, GLOVE_RADIUS - 10, (80, 160, 255), -1)  # Inner highlight
+        cv2.putText(frame, "R", (wrist_r[0] - 10, wrist_r[1] + 8),
+                    cv2.FONT_HERSHEY_DUPLEX, 0.7, (255, 255, 255), 2)
 
-        # Draw Head tracker
-        cv2.circle(frame, nose, 10, (0, 255, 0), 2)
+        # NOTE: The nose dot has been removed so your face remains completely clean!
+        # (The code still tracks head coordinates in the background for laser ducking)
 
     # -------------------------------------------------------------------------
     # GAMEPLAY LOGIC
@@ -263,12 +270,12 @@ while cap.isOpened():
 
             if target["hand"] == "LEFT" and wrist_l:
                 d = math.hypot(wrist_l[0] - target["x"], wrist_l[1] - target["y"])
-                if d < (r + 15):
+                if d < (r + GLOVE_RADIUS - 5):
                     hit = True
                     hit_speed = speed_l
             elif target["hand"] == "RIGHT" and wrist_r:
                 d = math.hypot(wrist_r[0] - target["x"], wrist_r[1] - target["y"])
-                if d < (r + 15):
+                if d < (r + GLOVE_RADIUS - 5):
                     hit = True
                     hit_speed = speed_r
 
