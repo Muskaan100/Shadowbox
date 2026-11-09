@@ -8,6 +8,7 @@ import sounddevice as sd
 import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
+from sound_fx import play_sfx
 
 # -----------------------------------------------------------------------------
 # SHADOW-BOXER: MULTIMODAL KINETIC & ACOUSTIC AR BOXING GAME
@@ -340,6 +341,7 @@ while cap.isOpened():
             shield_start_time = current_time
             shield_center = ((wrist_l[0] + wrist_r[0]) // 2, (wrist_l[1] + wrist_r[1]) // 2)
             create_explosion(shield_center[0], shield_center[1], (255, 255, 0), is_kiai=True)
+            play_sfx("shield")
 
     # -------------------------------------------------------------------------
     # GAMEPLAY LOGIC
@@ -384,6 +386,7 @@ while cap.isOpened():
             laser_start_time = current_time
             laser_dodged = False
             laser_deflected = False
+            play_sfx("laser")
 
         if laser_active:
             laser_elapsed = current_time - laser_start_time
@@ -418,6 +421,7 @@ while cap.isOpened():
                     last_hit_time = current_time
                     screen_shake = 7
                     create_explosion(WIDTH // 2, laser_y, (255, 255, 0), is_kiai=True)
+                    play_sfx("shield")
                 elif laser_dodged:
                     score += 50
                     dodges_completed += 1
@@ -466,8 +470,11 @@ while cap.isOpened():
                     kiai_strikes += 1
                     screen_shake = 10  # Violently shake screen on Kiai impact!
                     create_explosion(target["x"], target["y"], t_color, is_kiai=True)
+                    play_sfx("kiai")
                 else:
                     create_explosion(target["x"], target["y"], t_color, is_kiai=False)
+                    play_sfx("punch")
+                    play_sfx("combo", combo)
 
                 total_punches += 1
                 combo += 1
@@ -584,6 +591,7 @@ while cap.isOpened():
             shield_start_time = 0.0
             max_punch_speed = 0.0
             dodges_completed = 0
+            play_sfx("start")
     elif key == ord('r'):  # Restart
         GAME_STATE = "PLAYING"
         round_start_time = time.time()
@@ -596,10 +604,12 @@ while cap.isOpened():
         shield_start_time = 0.0
         max_punch_speed = 0.0
         dodges_completed = 0
+        play_sfx("start")
     elif key == ord('s'):  # Manual debug shortcut for Sonic Shield
         if GAME_STATE == "PLAYING":
             shield_start_time = current_time
             create_explosion(WIDTH // 2, HEIGHT // 2, (255, 255, 0), is_kiai=True)
+            play_sfx("shield")
 
 cap.release()
 cv2.destroyAllWindows()

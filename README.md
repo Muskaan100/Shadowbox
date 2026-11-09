@@ -36,9 +36,10 @@ Using **Google MediaPipe BlazePose** and real-time **RMS audio energy extraction
 ---
 
 ## ⚡ Features
-- **Multimodal "KIAI" Battle Cry:** Shouting or grunting while throwing a punch triggers a **5x Critical Power Strike** with dynamic screen shake and blazing golden particle bursts!
-- **Multimodal "Clap" Sonic Forcefield:** Clapping your hands together (dual-wrist proximity + acoustic transient spike) projects a glowing **Cyan Electric Forcefield** that parries laser hazards for **+75 Parry Points**!
-- **Zero-Latency Kinetic Controls:** Dual-wrist tracking with enlarged arcade boxing gloves (Cyan for Left, Flame Orange for Right).
+- **Procedural 8-Bit Arcade Audio Synthesizer:** Real-time multi-channel audio synthesis (`sound_fx.py`) that mathematically generates leather punches, explosive sub-bass Kiai booms, electric shield deflections, ascending pentatonic combo chimes, and fight bells with **zero external audio files**!
+- **Multimodal "KIAI" Battle Cry:** Shouting or grunting while throwing a punch triggers a **5x Critical Power Strike** with dynamic screen shake, booming audio, and blazing golden particle bursts!
+- **Multimodal "Clap" Sonic Forcefield:** Clapping your hands together (dual-wrist proximity + acoustic transient spike) projects a glowing **Cyan Electric Forcefield** with electric zap audio that parries laser hazards for **+75 Parry Points**!
+- **Oriented Arcade Boxing Gloves:** Forearm vector tracking ($\vec{V} = \text{Wrist} - \text{Elbow}$) dynamically rotates stylized boxing gloves (knuckle padding, thumb, velcro strap, speed trails) in the direction of your punch.
 - **Physical Dodge Hazard:** Full-body kinetic engagement — players can either physically squat/duck under sweeping laser beams or deflect them with the Sonic Shield.
 - **Punch Velocity Physics:** Measures wrist displacement $(\Delta d / \Delta t)$ per frame to compute simulated punch impact speed in km/h.
 - **Dynamic Audio HUD:** Real-time microphone volume bar that turns into a flashing `"KIAI READY!"` state when your voice reaches battle energy.
@@ -55,7 +56,7 @@ Using **Google MediaPipe BlazePose** and real-time **RMS audio energy extraction
 
 ### 2. Install Dependencies
 ```bash
-pip install opencv-python mediapipe numpy
+pip install opencv-python mediapipe numpy pygame
 ```
 
 ### 3. Run the Game
