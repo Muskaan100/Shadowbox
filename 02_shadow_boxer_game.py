@@ -128,9 +128,9 @@ prev_fist_l = None
 prev_fist_r = None
 last_pose_time = time.time()
 
-# Radii scaled to native resolution
+# Radii scaled to native resolution (proportionate, natural glove sizing)
 TARGET_RADIUS = int(48 * SCALE)
-BASE_GLOVE_RADIUS = int(58 * SCALE)
+BASE_GLOVE_RADIUS = int(45 * SCALE)
 GLOVE_RADIUS = BASE_GLOVE_RADIUS
 
 # Laser Hazard
@@ -353,15 +353,16 @@ def draw_boxing_glove(frame, wrist, elbow, is_left=True, speed=0.0, is_fury=Fals
     twist = anim["twist"] if anim else 0.0
     scale_boost = anim["scale_boost"] if anim else 0.0
 
-    # First-person forward projection: glove cuff is positioned slightly in front of the detected wrist
-    proj_dist = (34.0 * SCALE) + ext - rec
+    # First-person forward projection: glove sits slightly in front of the detected hand
+    proj_dist = (24.0 * SCALE) + ext - rec
     ax = int(wx + proj_dist * math.cos(rad))
     ay = int(wy + proj_dist * math.sin(rad))
 
-    # Base scale: make gloves noticeably larger and prominent in first-person view
-    g_scale = (195.0 / 360.0) * SCALE * (1.22 + scale_boost)
-    gw = max(24, int(360 * g_scale))
-    gh = max(32, int(480 * g_scale))
+    # Proportionate glove sizing: fits the player's hand naturally without obstructing targets
+    base_width = 120.0 * SCALE
+    g_scale = (base_width / 360.0) * (1.0 + scale_boost * 0.5)
+    gw = max(20, int(360 * g_scale))
+    gh = max(26, int(480 * g_scale))
 
     sprite_src = GLOVE_SPRITE_L if is_left else GLOVE_SPRITE_R
     resized = cv2.resize(sprite_src, (gw, gh), interpolation=cv2.INTER_LINEAR)
@@ -397,10 +398,10 @@ def draw_boxing_glove(frame, wrist, elbow, is_left=True, speed=0.0, is_fury=Fals
         trail_col = (0, 215, 255) if is_left else (0, 140, 255)
         if is_fury:
             trail_col = (255, 50, 200)
-        for offset_px in (int(22 * SCALE), int(40 * SCALE)):
+        for offset_px in (int(18 * SCALE), int(34 * SCALE)):
             tx = int(ax - offset_px * math.cos(rad))
             ty = int(ay - offset_px * math.sin(rad))
-            cv2.ellipse(frame, (tx, ty), (int(56 * SCALE), int(40 * SCALE)), int(forearm_deg), 0, 360, trail_col, 2)
+            cv2.ellipse(frame, (tx, ty), (int(46 * SCALE), int(32 * SCALE)), int(forearm_deg), 0, 360, trail_col, 2)
 
     # Fast Alpha blend rotated glove onto frame
     rx1 = ax - d_max
@@ -427,9 +428,12 @@ def draw_boxing_glove(frame, wrist, elbow, is_left=True, speed=0.0, is_fury=Fals
     fist_x = int(ax + rot_dx)
     fist_y = int(ay + rot_dy)
 
-    # 1. Enlarged detected hand tracking anchor ring on player's wrist
-    cv2.circle(frame, (wx, wy), int(20 * SCALE), (255, 255, 255), 2)
-    cv2.circle(frame, (wx, wy), int(10 * SCALE), (35, 35, 220), -1)
+    # 1. Detected hand tracking anchor ring on player's wrist with clear L / R label
+    lbl = "L" if is_left else "R"
+    cv2.circle(frame, (wx, wy), int(15 * SCALE), (255, 255, 255), 2)
+    cv2.circle(frame, (wx, wy), int(8 * SCALE), (35, 35, 220), -1)
+    cv2.putText(frame, lbl, (wx - int(5 * SCALE), wy + int(5 * SCALE)),
+                cv2.FONT_HERSHEY_DUPLEX, 0.42 * SCALE, (255, 255, 255), 1)
 
     return (fist_x, fist_y)
 
@@ -623,12 +627,16 @@ while cap.isOpened():
 
     if result.pose_landmarks and len(result.pose_landmarks) > 0:
         lms = result.pose_landmarks[0]
-        # Landmarks: 0: Nose, 13: Left Elbow, 14: Right Elbow, 15: Left Wrist, 16: Right Wrist
+        # Landmarks in mirrored view:
+        # Landmark 16 (image left) = Player's actual Left Hand
+        # Landmark 15 (image right) = Player's actual Right Hand
+        # Landmark 14 (image left) = Player's actual Left Elbow
+        # Landmark 13 (image right) = Player's actual Right Elbow
         raw_nose = (int(lms[0].x * SCREEN_WIDTH), int(lms[0].y * SCREEN_HEIGHT))
-        raw_el = (int(lms[13].x * SCREEN_WIDTH), int(lms[13].y * SCREEN_HEIGHT))
-        raw_er = (int(lms[14].x * SCREEN_WIDTH), int(lms[14].y * SCREEN_HEIGHT))
-        raw_wl = (int(lms[15].x * SCREEN_WIDTH), int(lms[15].y * SCREEN_HEIGHT))
-        raw_wr = (int(lms[16].x * SCREEN_WIDTH), int(lms[16].y * SCREEN_HEIGHT))
+        raw_el = (int(lms[14].x * SCREEN_WIDTH), int(lms[14].y * SCREEN_HEIGHT))
+        raw_er = (int(lms[13].x * SCREEN_WIDTH), int(lms[13].y * SCREEN_HEIGHT))
+        raw_wl = (int(lms[16].x * SCREEN_WIDTH), int(lms[16].y * SCREEN_HEIGHT))
+        raw_wr = (int(lms[15].x * SCREEN_WIDTH), int(lms[15].y * SCREEN_HEIGHT))
 
         # Exponential Moving Average (EMA) smoothing for silky, jitter-free precision
         alpha = 0.82
