@@ -36,9 +36,13 @@ Using **Google MediaPipe BlazePose** and real-time **RMS audio energy extraction
 ---
 
 ## ⚡ Features
+- **Authentic Professional Boxing Gloves (First-Person View):** Rebuilt with realistic 2D pro fight glove anatomy — convex padded striking surface across 4 knuckle cushions, connected ergonomic thumb with safety webbing seam, thick padded wrist cuffs with velcro straps, layered leather shadows, and glossy specular highlights.
+- **Physical Punch Animations & First-Person Perspective:** Dynamic biomechanical extension, perspective zoom (+24% scale as fists punch toward the camera), fist pronation (inward rotation), and snappy 80ms impact spring recoil on target connection.
+- **Realistic Acoustic Boxing Audio Engine:** Procedural multi-layer acoustic model combining initial leather-on-leather slap transients (800–1600 Hz), resonant mid-body compression thuds (180 $\to$ 75 Hz), and visceral sub-bass impulses (45–60 Hz) saturated with soft-clipping analog compression.
+- **Organic Audio Variation & Rate Limiting:** 4-sound punch variation bank with randomized pitch and volume, explosive critical hits, crisp target shattering pops, metallic mini-boss crunches, and an air displacement *whoosh* sound when throwing fast punches through mid-air.
+- **Enlarged Detected Hand Tracking Anchors:** High-visibility luminous wrist tracking indicators coupled with forward-projected first-person gloves.
 - **Full-Screen Arcade Gameplay:** Launches natively in borderless full-screen (`cv2.WINDOW_FULLSCREEN`) with dynamic responsive UI scaling across all monitor resolutions and aspect ratios. Toggle anytime with `F`!
 - **High-Performance Low-Latency CPU Pipeline:** MediaPipe pose estimation runs on an optimized downsampled stream paired with Exponential Moving Average (EMA) sub-pixel smoothing, delivering steady 45–60 FPS and zero perceptible lag even on modest laptops!
-- **Massive Boxing Gloves & Glowing Knuckle Reticles:** Enlarged high-contrast boxing gloves with directional forearm rotation, blazing speed trails, and glowing holographic targeting reticles on knuckles.
 - **Continuous Swept Collision Detection:** Mathematical line-segment sweeping prevents fast punches from tunneling through targets, making punch registration forgiving, natural, and responsive.
 - **Mechanical Mini-Boss Waves:** Multi-hit armored bosses (*MECHA-BRUTE* and *CYBER-TITAN*) emerge with rotating spiked energy shields, floating segmented health bars, audio alarms, and huge point bounties.
 - **Glowing Power-Up Orbs:** Dynamic power-ups spawn throughout the match with live HUD countdown bars:
@@ -47,7 +51,6 @@ Using **Google MediaPipe BlazePose** and real-time **RMS audio energy extraction
   - 🌟 **Score Multiplier (3X SCORE):** Triples all earned points.
   - ⚡ **Rapid Fury (FURY):** Expands glove hitboxes by +55% with blazing glove fire.
   - 🛡️ **Titanium Shield (SHIELD):** Auto-deflects hazards with total immunity.
-- **Procedural 8-Bit Arcade Audio Synthesizer:** Real-time multi-channel audio synthesis (`sound_fx.py`) mathematically generates leather punches, explosive sub-bass Kiai booms, electric shield deflections, ascending combo chimes, boss horns, and triumph fanfares with **zero external audio files**!
 - **Multimodal "KIAI" Battle Cry:** Shouting or grunting while throwing a punch triggers a **5x Critical Power Strike** with dynamic screen shake, booming audio, and blazing golden particle bursts!
 - **Multimodal "Clap" Sonic Forcefield:** Clapping your hands together (dual-wrist proximity + acoustic transient spike) projects a glowing **Cyan Electric Forcefield** with electric zap audio that parries laser hazards for **+75 Parry Points**!
 - **Physical Dodge Hazard:** Full-body kinetic engagement — players can physically squat/duck under sweeping laser beams or deflect them with the Sonic Shield.

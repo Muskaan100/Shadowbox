@@ -318,97 +318,163 @@ def dist_point_to_segment(p1, p2, c):
     proj_y = y1 + t * dy
     return math.hypot(cx - proj_x, cy - proj_y)
 
-def get_fist_point(wrist, elbow):
-    """Project knuckle center forward along forearm punch angle."""
+# -----------------------------------------------------------------------------
+# DYNAMIC GLOVE ANIMATION STATE (First-Person Perspective, Extension & Recoil)
+# -----------------------------------------------------------------------------
+glove_anim_l = {"extend": 0.0, "recoil": 0.0, "twist": 0.0, "scale_boost": 0.0}
+glove_anim_r = {"extend": 0.0, "recoil": 0.0, "twist": 0.0, "scale_boost": 0.0}
+last_whoosh_time = 0.0
+
+def get_fist_point(wrist, elbow, anim=None):
+    """Project knuckle center forward along forearm punch angle with dynamic extension & recoil."""
     wx, wy = wrist
     if elbow:
         ex, ey = elbow
         rad = math.atan2(wy - ey, wx - ex)
     else:
         rad = -math.pi / 2
-    offset = int(32 * SCALE)
-    fx = int(wx + offset * math.cos(rad))
-    fy = int(wy + offset * math.sin(rad))
+        
+    ext = anim["extend"] if anim else 0.0
+    rec = anim["recoil"] if anim else 0.0
+    # First-person projection: glove sits slightly forward of the actual wrist
+    base_offset = 44.0 * SCALE
+    eff_dist = (base_offset + ext - rec)
+    fx = int(wx + eff_dist * math.cos(rad))
+    fy = int(wy + eff_dist * math.sin(rad))
     return (fx, fy), rad
 
-def draw_boxing_glove(frame, wrist, elbow, is_left=True, speed=0.0, is_fury=False):
-    """Render an enlarged, stylized arcade boxing glove with high-visibility knuckle reticle."""
+def draw_boxing_glove(frame, wrist, elbow, is_left=True, speed=0.0, is_fury=False, anim=None):
+    """Render an authentic 2D professional boxing glove with anatomically curved knuckle padding,
+    connected thumb, padded wrist cuff, leather highlights, shadows, and perspective animations."""
     wx, wy = wrist
-    (fx, fy), rad = get_fist_point(wrist, elbow)
-    deg = math.degrees(rad)
-
-    # Vivid High-Contrast Arcade Palette
-    if is_fury:
-        main_color = (255, 60, 220)      # Neon Fury Violet
-        shadow_color = (160, 20, 140)
-        cuff_color = (255, 255, 255)
-    else:
-        main_color = (255, 195, 25) if is_left else (25, 55, 255)
-        shadow_color = (175, 105, 0) if is_left else (10, 20, 160)
-        cuff_color = (245, 245, 245)
-
-    px = -math.sin(rad)
-    py = math.cos(rad)
-
-    # 1. Trailing Fire / Speed After-Images
-    if speed > 16 or is_fury:
-        trail_color = (0, 215, 255) if is_left else (0, 140, 255)
-        if is_fury:
-            trail_color = (255, 50, 200)
-        for offset in (int(20 * SCALE), int(38 * SCALE)):
-            tx = int(fx - offset * math.cos(rad))
-            ty = int(fy - offset * math.sin(rad))
-            cv2.ellipse(frame, (tx, ty), (int(42 * SCALE), int(30 * SCALE)), deg, 0, 360, trail_color, 2)
-
-    # 2. Wrist Cuff Strap
-    cuff_half = int(28 * SCALE)
-    cuff_p1 = (int(wx + px * cuff_half), int(wy + py * cuff_half))
-    cuff_p2 = (int(wx - px * cuff_half), int(wy - py * cuff_half))
-    cv2.line(frame, cuff_p1, cuff_p2, (15, 15, 15), int(20 * SCALE))
-    cv2.line(frame, cuff_p1, cuff_p2, cuff_color, int(15 * SCALE))
-    cv2.line(frame, cuff_p1, cuff_p2, (50, 50, 50), int(3 * SCALE))
-
-    # 3. Curved Thumb Dome
-    thumb_dir = 1 if is_left else -1
-    tx = int(wx + 18 * SCALE * math.cos(rad) + thumb_dir * 32 * SCALE * px)
-    ty = int(wy + 18 * SCALE * math.sin(rad) + thumb_dir * 32 * SCALE * py)
-    cv2.ellipse(frame, (tx, ty), (int(20 * SCALE), int(15 * SCALE)), deg + thumb_dir * 30, 0, 360, (15, 15, 15), -1)
-    cv2.ellipse(frame, (tx, ty), (int(17 * SCALE), int(12 * SCALE)), deg + thumb_dir * 30, 0, 360, shadow_color, -1)
-    cv2.ellipse(frame, (tx, ty), (int(13 * SCALE), int(9 * SCALE)), deg + thumb_dir * 30, 0, 360, main_color, -1)
-
-    # 4. Main Knuckle Bulb (Enlarged for arcade impact)
-    k_w = int(52 * SCALE)
-    k_h = int(40 * SCALE)
-    cv2.ellipse(frame, (fx, fy), (k_w + 3, k_h + 3), deg, 0, 360, (15, 15, 15), -1)
-    cv2.ellipse(frame, (fx, fy), (k_w, k_h), deg, 0, 360, shadow_color, -1)
+    (fx, fy), rad = get_fist_point(wrist, elbow, anim)
     
-    # 3D Depth highlight offset
-    f_inner_x = int(fx - 3 * SCALE * math.cos(rad))
-    f_inner_y = int(fy - 3 * SCALE * math.sin(rad))
-    cv2.ellipse(frame, (f_inner_x, f_inner_y), (k_w - 4, k_h - 4), deg, 0, 360, main_color, -1)
+    # Biomechanical fist pronation (turning over the fist as the arm extends)
+    twist_deg = anim["twist"] if anim else 0.0
+    deg = math.degrees(rad) + (twist_deg * (-1.0 if is_left else 1.0))
+    eff_rad = math.radians(deg)
 
-    # 5. Glossy Leather Highlights
-    hx = int(fx - 16 * SCALE * math.cos(rad) - 12 * SCALE * px)
-    hy = int(fy - 16 * SCALE * math.sin(rad) - 12 * SCALE * py)
-    cv2.ellipse(frame, (hx, hy), (int(22 * SCALE), int(9 * SCALE)), deg - 15, 0, 360, (255, 255, 255), -1)
+    # Dynamic perspective scaling (glove appears larger as it punches closer to screen)
+    scale_boost = anim["scale_boost"] if anim else 0.0
+    g_scale = SCALE * (1.28 + scale_boost)
 
-    # 6. Glove Stamped Label
-    lbl = 'L' if is_left else 'R'
-    cv2.putText(frame, lbl, (fx - int(12 * SCALE), fy + int(10 * SCALE)),
-                cv2.FONT_HERSHEY_DUPLEX, 0.85 * SCALE, (255, 255, 255), 2)
+    # Authentic Professional Palette: Cyan for Left, Crimson for Right, Neon Violet for Fury
+    if is_fury:
+        main_color = (255, 55, 220)       # Neon Fury Violet
+        shadow_color = (150, 15, 130)     # Deep Plum Shadow
+        highlight_color = (255, 210, 255) # Glossy White/Pink Highlight
+        cuff_accent = (0, 215, 255)       # Gold Accent Stitching
+    elif is_left:
+        main_color = (245, 185, 20)       # Electric Pro Cyan
+        shadow_color = (155, 95, 0)       # Deep Ocean Navy Shadow
+        highlight_color = (255, 255, 240) # Bright Specular Leather Sheen
+        cuff_accent = (255, 220, 50)      # Cyan Accent Trim
+    else:
+        main_color = (20, 45, 235)        # Vivid Pro Crimson
+        shadow_color = (10, 15, 140)      # Deep Burgundy Shadow
+        highlight_color = (255, 235, 235) # Bright Specular Leather Sheen
+        cuff_accent = (0, 180, 255)       # Gold Accent Trim
 
-    # 7. HIGH-VISIBILITY GLOWING PUNCH RETICLE (Indicator ring showing exact punch hit point)
-    reticle_r = int(34 * SCALE)
+    cuff_white = (245, 245, 245)
+    border_color = (15, 15, 15)
+
+    px = -math.sin(eff_rad)
+    py = math.cos(eff_rad)
+
+    # 1. ENLARGED DETECTED HAND INDICATOR (Shows player's actual hand tracking anchor)
+    hand_indicator_r = int(22 * SCALE)
+    cv2.circle(frame, (wx, wy), hand_indicator_r, (255, 255, 255), 2)
+    cv2.circle(frame, (wx, wy), int(10 * SCALE), main_color, -1)
+
+    # 2. Speed After-Image Trails (When throwing fast jabs or hooks)
+    if speed > 15 or is_fury:
+        trail_col = (0, 215, 255) if is_left else (0, 140, 255)
+        if is_fury:
+            trail_col = (255, 50, 200)
+        for offset_px in (int(22 * g_scale), int(42 * g_scale)):
+            tx = int(fx - offset_px * math.cos(eff_rad))
+            ty = int(fy - offset_px * math.sin(eff_rad))
+            cv2.ellipse(frame, (tx, ty), (int(52 * g_scale), int(38 * g_scale)), deg, 0, 360, trail_col, 2)
+
+    # 3. Padded Wrist Cuff & Strap (Secures glove onto forearm)
+    cuff_w = int(32 * g_scale)
+    cuff_p1 = (int(wx + px * cuff_w), int(wy + py * cuff_w))
+    cuff_p2 = (int(wx - px * cuff_w), int(wy - py * cuff_w))
+    
+    # Outer black leather border
+    cv2.line(frame, cuff_p1, cuff_p2, border_color, int(26 * g_scale))
+    # Wide padded white leather strap
+    cv2.line(frame, cuff_p1, cuff_p2, cuff_white, int(20 * g_scale))
+    # Stitching & velcro seam
+    cv2.line(frame, cuff_p1, cuff_p2, cuff_accent, int(4 * g_scale))
+
+    # Brand badge on cuff
+    badge_lbl = "L" if is_left else "R"
+    cv2.putText(frame, badge_lbl, (wx - int(7 * g_scale), wy + int(6 * g_scale)),
+                cv2.FONT_HERSHEY_DUPLEX, 0.65 * g_scale, (15, 15, 15), 2)
+
+    # 4. Ergonomic Tucked Thumb (Connected with anatomical safety seam)
+    thumb_dir = 1.0 if is_left else -1.0
+    thumb_cx = int(wx + (20 * g_scale) * math.cos(eff_rad) + (thumb_dir * 38 * g_scale) * px)
+    thumb_cy = int(wy + (20 * g_scale) * math.sin(eff_rad) + (thumb_dir * 38 * g_scale) * py)
+    thumb_ang = deg + (thumb_dir * 32)
+
+    # Thumb attachment webbing connection to glove body
+    web_p1 = (thumb_cx, thumb_cy)
+    web_p2 = (int(fx + (thumb_dir * 25 * g_scale) * px), int(fy + (thumb_dir * 25 * g_scale) * py))
+    cv2.line(frame, web_p1, web_p2, border_color, int(18 * g_scale))
+    cv2.line(frame, web_p1, web_p2, shadow_color, int(14 * g_scale))
+
+    # Thumb padded dome
+    cv2.ellipse(frame, (thumb_cx, thumb_cy), (int(24 * g_scale), int(17 * g_scale)), thumb_ang, 0, 360, border_color, -1)
+    cv2.ellipse(frame, (thumb_cx, thumb_cy), (int(21 * g_scale), int(14 * g_scale)), thumb_ang, 0, 360, shadow_color, -1)
+    cv2.ellipse(frame, (thumb_cx, thumb_cy), (int(16 * g_scale), int(10 * g_scale)), thumb_ang, 0, 360, main_color, -1)
+    # Thumb specular leather highlight
+    cv2.ellipse(frame, (thumb_cx, thumb_cy), (int(10 * g_scale), int(4 * g_scale)), thumb_ang - 10, 0, 360, highlight_color, -1)
+
+    # 5. Main Boxing Glove Body & Convex Knuckle Padding (The Striking Surface)
+    kw = int(64 * g_scale)  # Broad knuckle impact width
+    kh = int(48 * g_scale)  # Padded depth
+
+    # Outer cartoon/arcade outline
+    cv2.ellipse(frame, (fx, fy), (kw + 4, kh + 4), deg, 0, 360, border_color, -1)
+    # Deep bottom/lateral leather shadow
+    cv2.ellipse(frame, (fx, fy), (kw, kh), deg, 0, 360, shadow_color, -1)
+
+    # 3D Depth offset: main striking leather dome
+    f_inner_x = int(fx - 4 * g_scale * math.cos(eff_rad))
+    f_inner_y = int(fy - 4 * g_scale * math.sin(eff_rad))
+    cv2.ellipse(frame, (f_inner_x, f_inner_y), (kw - 5, kh - 5), deg, 0, 360, main_color, -1)
+
+    # Knuckle flex crease (anatomical seam separating knuckle pads from back of hand)
+    crease_x = int(fx - 12 * g_scale * math.cos(eff_rad))
+    crease_y = int(fy - 12 * g_scale * math.sin(eff_rad))
+    cv2.ellipse(frame, (crease_x, crease_y), (int(38 * g_scale), int(16 * g_scale)), deg, 190, 350, border_color, int(2 * g_scale))
+
+    # Glossy Curved Specular Highlight (Simulates polished leather sheen)
+    hx = int(fx - 18 * g_scale * math.cos(eff_rad) - 14 * g_scale * px)
+    hy = int(fy - 18 * g_scale * math.sin(eff_rad) - 14 * g_scale * py)
+    cv2.ellipse(frame, (hx, hy), (int(28 * g_scale), int(10 * g_scale)), deg - 15, 0, 360, highlight_color, -1)
+
+    # Glove Brand Stamp
+    cv2.putText(frame, "PRO", (fx - int(18 * g_scale), fy + int(10 * g_scale)),
+                cv2.FONT_HERSHEY_DUPLEX, 0.75 * g_scale, (255, 255, 255), 2)
+
+    # 6. HIGH-VISIBILITY GLOWING KNUCKLE IMPACT RETICLE (Precise striking surface target indicator)
+    reticle_r = int(38 * g_scale)
     ret_color = (255, 255, 255)
     cv2.circle(frame, (fx, fy), reticle_r, ret_color, 2)
     # 4 Crosshair ticks on the ring
     for angle_offset in (0, 90, 180, 270):
         c_rad = math.radians(deg + angle_offset)
-        r_inner = reticle_r - int(6 * SCALE)
-        r_outer = reticle_r + int(6 * SCALE)
+        r_inner = reticle_r - int(7 * g_scale)
+        r_outer = reticle_r + int(7 * g_scale)
         p_in = (int(fx + r_inner * math.cos(c_rad)), int(fy + r_inner * math.sin(c_rad)))
         p_out = (int(fx + r_outer * math.cos(c_rad)), int(fy + r_outer * math.sin(c_rad)))
         cv2.line(frame, p_in, p_out, ret_color, 2)
+
+    # Center glowing power core
+    cv2.circle(frame, (fx, fy), int(6 * g_scale), (0, 255, 255), -1)
 
     return (fx, fy)
 
@@ -641,11 +707,26 @@ while cap.isOpened():
             dist_r = math.hypot(wrist_r[0] - prev_fist_r[0], wrist_r[1] - prev_fist_r[1])
             speed_r = (dist_r / dt) * 0.04
 
+        # Update Glove Punch Animation Physics (Extension, Perspective Zoom & Fist Pronation)
+        for spd, anim in [(speed_l, glove_anim_l), (speed_r, glove_anim_r)]:
+            if spd > 13:
+                target_ext = min(42.0 * SCALE, (spd - 13) * 1.8 * SCALE)
+                anim["extend"] = anim["extend"] * 0.65 + target_ext * 0.35
+                anim["scale_boost"] = min(0.24, (spd - 13) * 0.012)
+                anim["twist"] = min(16.0, (spd - 13) * 0.8)
+            else:
+                anim["extend"] = max(0.0, anim["extend"] - dt * 90.0 * SCALE)
+                anim["scale_boost"] = max(0.0, anim["scale_boost"] - dt * 1.5)
+                anim["twist"] = max(0.0, anim["twist"] - dt * 60.0)
+
+            if anim["recoil"] > 0:
+                anim["recoil"] = max(0.0, anim["recoil"] - dt * 240.0 * SCALE)
+
         is_fury = (active_powerup == "RAPID_FURY" and current_time < powerup_end_time)
 
-        # Draw enlarged arcade boxing gloves + glowing knuckle target reticles
-        fist_l = draw_boxing_glove(frame, wrist_l, elbow_l, is_left=True, speed=speed_l, is_fury=is_fury)
-        fist_r = draw_boxing_glove(frame, wrist_r, elbow_r, is_left=False, speed=speed_r, is_fury=is_fury)
+        # Draw enlarged pro boxing gloves + first-person perspective animations
+        fist_l = draw_boxing_glove(frame, wrist_l, elbow_l, is_left=True, speed=speed_l, is_fury=is_fury, anim=glove_anim_l)
+        fist_r = draw_boxing_glove(frame, wrist_r, elbow_r, is_left=False, speed=speed_r, is_fury=is_fury, anim=glove_anim_r)
 
         # ---------------------------------------------------------------------
         # MULTIMODAL CLAP DETECTION (Wrists Close + Acoustic Energy Spike)
@@ -777,6 +858,12 @@ while cap.isOpened():
                 boss_data["hit_flash_time"] = current_time
                 is_kiai = (current_time - kiai_trigger_time) < 0.65
 
+                # Apply impact recoil animation to hitting glove
+                if fist_l and dist_point_to_segment(prev_fist_l, fist_l, (bx, by)) < (br + GLOVE_RADIUS):
+                    glove_anim_l["recoil"] = 22.0 * SCALE
+                else:
+                    glove_anim_r["recoil"] = 22.0 * SCALE
+
                 # Damage Calculation
                 dmg = 1
                 if active_powerup == "DOUBLE_DMG" and current_time < powerup_end_time:
@@ -842,6 +929,12 @@ while cap.isOpened():
                     pu_hit = True
 
                 if pu_hit:
+                    # Apply recoil animation to hitting glove
+                    if fist_l and dist_point_to_segment(prev_fist_l, fist_l, (pux, puy)) < (pur + GLOVE_RADIUS):
+                        glove_anim_l["recoil"] = 16.0 * SCALE
+                    else:
+                        glove_anim_r["recoil"] = 16.0 * SCALE
+
                     active_powerup = powerup_target["type"]
                     cfg = POWERUP_TYPES[active_powerup]
                     powerup_end_time = current_time + cfg["duration"]
@@ -925,6 +1018,7 @@ while cap.isOpened():
             # Continuous Swept Collision Detection (Prevents tunneling through targets!)
             hit = False
             hit_speed = 0.0
+            hit_hand = None
             tgt_center = (target["x"], target["y"])
 
             # Left Hand Check
@@ -933,6 +1027,7 @@ while cap.isOpened():
                 if d_swept < (r + GLOVE_RADIUS + 15):
                     hit = True
                     hit_speed = speed_l
+                    hit_hand = "LEFT"
 
             # Right Hand Check
             elif target["hand"] == "RIGHT" and fist_r:
@@ -940,27 +1035,37 @@ while cap.isOpened():
                 if d_swept < (r + GLOVE_RADIUS + 15):
                     hit = True
                     hit_speed = speed_r
+                    hit_hand = "RIGHT"
 
             # Forgiving Cross/Fury Hand Check: In Rapid Fury mode, either hand hits!
             if not hit and active_powerup == "RAPID_FURY":
-                for f_pt, p_pt, spd in [(fist_l, prev_fist_l, speed_l), (fist_r, prev_fist_r, speed_r)]:
+                for h_name, f_pt, p_pt, spd in [("LEFT", fist_l, prev_fist_l, speed_l), ("RIGHT", fist_r, prev_fist_r, speed_r)]:
                     if f_pt and dist_point_to_segment(p_pt, f_pt, tgt_center) < (r + GLOVE_RADIUS + 25):
                         hit = True
                         hit_speed = spd
+                        hit_hand = h_name
                         break
 
             if hit:
+                # Apply impact recoil animation to hitting glove
+                if hit_hand == "LEFT":
+                    glove_anim_l["recoil"] = 20.0 * SCALE
+                else:
+                    glove_anim_r["recoil"] = 20.0 * SCALE
+
                 is_kiai = (current_time - kiai_trigger_time) < 0.65
 
                 if is_kiai:
                     kiai_strikes += 1
                     screen_shake = 10
                     create_explosion(target["x"], target["y"], t_color, count=36, is_kiai=True)
+                    play_sfx("critical")
                     play_sfx("kiai")
                     trigger_haptic("kiai")
                 else:
                     create_explosion(target["x"], target["y"], t_color, count=16)
                     play_sfx("punch")
+                    play_sfx("destroy")
                     play_sfx("combo", combo)
                     trigger_haptic("punch")
 
@@ -987,6 +1092,11 @@ while cap.isOpened():
 
                 # Immediate respawn
                 target = spawn_target()
+            else:
+                # Check for missed fast punch air displacement whoosh!
+                if (speed_l > 22.0 or speed_r > 22.0) and (current_time - last_whoosh_time > 0.28):
+                    play_sfx("whoosh")
+                    last_whoosh_time = current_time
 
         # Update flying particle system
         update_and_draw_particles(frame)
