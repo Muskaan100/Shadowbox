@@ -189,6 +189,70 @@ def draw_sonic_shield(frame, cx, cy, progress):
     cv2.putText(frame, "SONIC SHIELD ACTIVE", (cx - 110, cy - shield_radius - 12),
                 cv2.FONT_HERSHEY_DUPLEX, 0.58, (255, 255, 0), 2)
 
+def draw_boxing_glove(frame, wrist, elbow, is_left=True, speed=0.0):
+    """Render a stylized arcade boxing glove with knuckle padding, thumb, strap & highlights."""
+    wx, wy = wrist
+    if elbow:
+        ex, ey = elbow
+        rad = math.atan2(wy - ey, wx - ex)
+        deg = math.degrees(rad)
+    else:
+        rad = -math.pi / 2
+        deg = -90
+
+    # Colors: Electric Cyan for Left, Vivid Crimson for Right
+    main_color = (245, 185, 20) if is_left else (20, 45, 245)
+    shadow_color = (170, 100, 0) if is_left else (10, 20, 150)
+    cuff_color = (240, 240, 240)
+
+    # Forward fist projection (moves knuckle dome forward in punch direction)
+    fx = int(wx + 22 * math.cos(rad))
+    fy = int(wy + 22 * math.sin(rad))
+
+    # Perpendicular unit vector
+    px = -math.sin(rad)
+    py = math.cos(rad)
+
+    # Speed Trail effect when throwing a fast punch!
+    if speed > 18:
+        trail_color = (0, 215, 255) if is_left else (0, 140, 255)
+        for offset in (16, 30):
+            tx = int(fx - offset * math.cos(rad))
+            ty = int(fy - offset * math.sin(rad))
+            cv2.ellipse(frame, (tx, ty), (32, 22), deg, 0, 360, trail_color, 2)
+
+    # 1. Wrist Cuff (White padded velcro strap right at wrist joint)
+    cuff_p1 = (int(wx + px * 22), int(wy + py * 22))
+    cuff_p2 = (int(wx - px * 22), int(wy - py * 22))
+    cv2.line(frame, cuff_p1, cuff_p2, (15, 15, 15), 16)      # Black outline
+    cv2.line(frame, cuff_p1, cuff_p2, cuff_color, 12)        # White strap
+    cv2.line(frame, cuff_p1, cuff_p2, (40, 40, 40), 2)       # Velcro seam
+
+    # 2. Thumb (curved inward toward body: +perp for Left, -perp for Right)
+    thumb_dir = 1 if is_left else -1
+    tx = int(wx + 14 * math.cos(rad) + thumb_dir * 25 * px)
+    ty = int(wy + 14 * math.sin(rad) + thumb_dir * 25 * py)
+    cv2.ellipse(frame, (tx, ty), (16, 12), deg + thumb_dir * 30, 0, 360, (15, 15, 15), -1)
+    cv2.ellipse(frame, (tx, ty), (14, 10), deg + thumb_dir * 30, 0, 360, shadow_color, -1)
+    cv2.ellipse(frame, (tx, ty), (11, 7), deg + thumb_dir * 30, 0, 360, main_color, -1)
+
+    # 3. Main Padded Knuckles (Bulbous curved boxing glove dome)
+    cv2.ellipse(frame, (fx, fy), (38, 30), deg, 0, 360, (15, 15, 15), -1)       # Bold cartoon outline
+    cv2.ellipse(frame, (fx, fy), (35, 27), deg, 0, 360, shadow_color, -1)     # Deep leather shadow
+    # Offset the main body slightly for 3D depth
+    f_inner_x = int(fx - 2 * math.cos(rad))
+    f_inner_y = int(fy - 2 * math.sin(rad))
+    cv2.ellipse(frame, (f_inner_x, f_inner_y), (32, 24), deg, 0, 360, main_color, -1)
+
+    # 4. Glossy 3D Highlight curve on leather
+    hx = int(fx - 12 * math.cos(rad) - 9 * px)
+    hy = int(fy - 12 * math.sin(rad) - 9 * py)
+    cv2.ellipse(frame, (hx, hy), (16, 7), deg - 15, 0, 360, (255, 255, 255), -1)
+
+    # 5. Glove Brand Stamp ('L' or 'R')
+    lbl = 'L' if is_left else 'R'
+    cv2.putText(frame, lbl, (fx - 9, fy + 7), cv2.FONT_HERSHEY_DUPLEX, 0.65, (255, 255, 255), 2)
+
 # Spawn initial target
 target = spawn_target()
 
@@ -239,8 +303,10 @@ while cap.isOpened():
 
     if result.pose_landmarks and len(result.pose_landmarks) > 0:
         lms = result.pose_landmarks[0]
-        # Nose: 0, Left Wrist: 15, Right Wrist: 16
+        # Nose: 0, Left Elbow: 13, Right Elbow: 14, Left Wrist: 15, Right Wrist: 16
         nose = (int(lms[0].x * WIDTH), int(lms[0].y * HEIGHT))
+        elbow_l = (int(lms[13].x * WIDTH), int(lms[13].y * HEIGHT))
+        elbow_r = (int(lms[14].x * WIDTH), int(lms[14].y * HEIGHT))
         wrist_l = (int(lms[15].x * WIDTH), int(lms[15].y * HEIGHT))
         wrist_r = (int(lms[16].x * WIDTH), int(lms[16].y * HEIGHT))
 
@@ -255,20 +321,9 @@ while cap.isOpened():
         prev_wrist_l = wrist_l
         prev_wrist_r = wrist_r
 
-        # Draw stylish arcade boxing gloves on wrists (significantly larger!)
-        # Left Glove (Cyan / Neon Blue)
-        cv2.circle(frame, wrist_l, GLOVE_RADIUS + 6, (255, 255, 255), 2)  # Outer glow ring
-        cv2.circle(frame, wrist_l, GLOVE_RADIUS, (255, 210, 0), -1)        # Solid punch glove
-        cv2.circle(frame, wrist_l, GLOVE_RADIUS - 10, (255, 240, 120), -1) # Inner highlight
-        cv2.putText(frame, "L", (wrist_l[0] - 10, wrist_l[1] + 8),
-                    cv2.FONT_HERSHEY_DUPLEX, 0.7, (20, 20, 20), 2)
-
-        # Right Glove (Flame Orange / Neon Red)
-        cv2.circle(frame, wrist_r, GLOVE_RADIUS + 6, (255, 255, 255), 2)  # Outer glow ring
-        cv2.circle(frame, wrist_r, GLOVE_RADIUS, (0, 80, 255), -1)         # Solid punch glove
-        cv2.circle(frame, wrist_r, GLOVE_RADIUS - 10, (80, 160, 255), -1)  # Inner highlight
-        cv2.putText(frame, "R", (wrist_r[0] - 10, wrist_r[1] + 8),
-                    cv2.FONT_HERSHEY_DUPLEX, 0.7, (255, 255, 255), 2)
+        # Draw realistic arcade boxing gloves on wrists oriented along forearm punch angles!
+        draw_boxing_glove(frame, wrist_l, elbow_l, is_left=True, speed=speed_l)
+        draw_boxing_glove(frame, wrist_r, elbow_r, is_left=False, speed=speed_r)
 
         # NOTE: The nose dot has been removed so your face remains completely clean!
         # (The code still tracks head coordinates in the background for laser ducking)

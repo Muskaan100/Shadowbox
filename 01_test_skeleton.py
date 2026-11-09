@@ -1,5 +1,6 @@
 import cv2
 import time
+import math
 import os
 import mediapipe as mp
 from mediapipe.tasks import python
@@ -28,6 +29,60 @@ detector = vision.PoseLandmarker.create_from_options(options)
 
 # Pre-extract skeletal connections
 CONNECTIONS = [(c.start, c.end) for c in vision.PoseLandmarksConnections.POSE_LANDMARKS]
+
+def draw_boxing_glove(frame, wrist, elbow, is_left=True):
+    """Render a stylized arcade boxing glove with knuckle padding, thumb, strap & highlights."""
+    wx, wy = wrist
+    if elbow:
+        ex, ey = elbow
+        rad = math.atan2(wy - ey, wx - ex)
+        deg = math.degrees(rad)
+    else:
+        rad = -math.pi / 2
+        deg = -90
+
+    # Colors: Electric Cyan for Left, Vivid Crimson for Right
+    main_color = (245, 185, 20) if is_left else (20, 45, 245)
+    shadow_color = (170, 100, 0) if is_left else (10, 20, 150)
+    cuff_color = (240, 240, 240)
+
+    # Forward knuckle projection
+    fx = int(wx + 22 * math.cos(rad))
+    fy = int(wy + 22 * math.sin(rad))
+
+    px = -math.sin(rad)
+    py = math.cos(rad)
+
+    # 1. Wrist Cuff (White strap)
+    cuff_p1 = (int(wx + px * 22), int(wy + py * 22))
+    cuff_p2 = (int(wx - px * 22), int(wy - py * 22))
+    cv2.line(frame, cuff_p1, cuff_p2, (15, 15, 15), 16)
+    cv2.line(frame, cuff_p1, cuff_p2, cuff_color, 12)
+    cv2.line(frame, cuff_p1, cuff_p2, (40, 40, 40), 2)
+
+    # 2. Thumb
+    thumb_dir = 1 if is_left else -1
+    tx = int(wx + 14 * math.cos(rad) + thumb_dir * 25 * px)
+    ty = int(wy + 14 * math.sin(rad) + thumb_dir * 25 * py)
+    cv2.ellipse(frame, (tx, ty), (16, 12), deg + thumb_dir * 30, 0, 360, (15, 15, 15), -1)
+    cv2.ellipse(frame, (tx, ty), (14, 10), deg + thumb_dir * 30, 0, 360, shadow_color, -1)
+    cv2.ellipse(frame, (tx, ty), (11, 7), deg + thumb_dir * 30, 0, 360, main_color, -1)
+
+    # 3. Main Padded Knuckles
+    cv2.ellipse(frame, (fx, fy), (38, 30), deg, 0, 360, (15, 15, 15), -1)
+    cv2.ellipse(frame, (fx, fy), (35, 27), deg, 0, 360, shadow_color, -1)
+    f_inner_x = int(fx - 2 * math.cos(rad))
+    f_inner_y = int(fy - 2 * math.sin(rad))
+    cv2.ellipse(frame, (f_inner_x, f_inner_y), (32, 24), deg, 0, 360, main_color, -1)
+
+    # 4. Glossy Highlight
+    hx = int(fx - 12 * math.cos(rad) - 9 * px)
+    hy = int(fy - 12 * math.sin(rad) - 9 * py)
+    cv2.ellipse(frame, (hx, hy), (16, 7), deg - 15, 0, 360, (255, 255, 255), -1)
+
+    # 5. Glove Brand Stamp
+    lbl = 'L' if is_left else 'R'
+    cv2.putText(frame, lbl, (fx - 9, fy + 7), cv2.FONT_HERSHEY_DUPLEX, 0.65, (255, 255, 255), 2)
 
 # 2. Open Laptop Webcam
 cap = cv2.VideoCapture(0)
@@ -78,18 +133,16 @@ while cap.isOpened():
 
         # Draw glowing joints
         for idx, (px, py) in pts.items():
-            # Highlight wrists (15: Left Wrist, 16: Right Wrist) with glowing boxing gloves
-            if idx == 15:
-                cv2.circle(frame, (px, py), 28, (255, 200, 0), -1)  # Left hand Cyan
-                cv2.circle(frame, (px, py), 34, (255, 255, 255), 2)
-            elif idx == 16:
-                cv2.circle(frame, (px, py), 28, (0, 80, 255), -1)   # Right hand Orange/Red
-                cv2.circle(frame, (px, py), 34, (255, 255, 255), 2)
-            elif idx == 0:
-                # Keep face clear without distracting nose dots
-                pass
-            else:
+            if idx not in (0, 15, 16):
                 cv2.circle(frame, (px, py), 3, (0, 255, 255), -1)
+
+        # Draw realistic arcade boxing gloves on wrists oriented along forearm
+        if 15 in pts:
+            elbow_l = pts.get(13)
+            draw_boxing_glove(frame, pts[15], elbow_l, is_left=True)
+        if 16 in pts:
+            elbow_r = pts.get(14)
+            draw_boxing_glove(frame, pts[16], elbow_r, is_left=False)
 
         # Display detected wrist coordinates
         if 15 in pts and 16 in pts:
