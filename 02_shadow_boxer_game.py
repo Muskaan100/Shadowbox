@@ -104,6 +104,16 @@ laser_start_time = 0
 laser_duration = 3.5  # duration laser stays active
 next_laser_time = time.time() + random.uniform(8, 14)
 laser_dodged = False
+laser_deflected = False
+
+# -----------------------------------------------------------------------------
+# SONIC FORCEFIELD SHIELD (Multimodal Clap Detection)
+# -----------------------------------------------------------------------------
+shield_active = False
+shield_start_time = 0.0
+shield_duration = 1.4       # Forcefield lasts 1.4 seconds
+shields_deflected = 0
+shield_center = (WIDTH // 2, HEIGHT // 2)
 
 # Particle System for Hit Explosions
 particles = []
@@ -151,6 +161,33 @@ def update_and_draw_particles(frame):
         cv2.circle(frame, (int(p["x"]), int(p["y"])), radius, p["color"], -1)
         if p["life"] <= 0:
             particles.remove(p)
+
+def draw_sonic_shield(frame, cx, cy, progress):
+    """Draw an electric arcade forcefield hex-shield when player claps."""
+    alpha = max(0.0, 1.0 - progress)
+    shield_radius = int(85 + math.sin(time.time() * 16) * 8)
+
+    # 1. Outer shockwave ripple expanding outward
+    shock_r = int(shield_radius + progress * 45)
+    cv2.circle(frame, (cx, cy), shock_r, (255, 255, 200), max(1, int(2 * alpha)))
+
+    # 2. Concentric glowing forcefield rings
+    cv2.circle(frame, (cx, cy), shield_radius, (255, 240, 0), 3)       # Cyan/Electric outer ring
+    cv2.circle(frame, (cx, cy), shield_radius - 14, (255, 255, 255), 2) # White core ring
+    cv2.circle(frame, (cx, cy), max(8, shield_radius - 30), (255, 200, 50), 2)
+
+    # 3. Geometric hex spokes
+    for angle_deg in (0, 60, 120, 180, 240, 300):
+        rad = math.radians(angle_deg)
+        x1 = int(cx + (shield_radius - 30) * math.cos(rad))
+        y1 = int(cy + (shield_radius - 30) * math.sin(rad))
+        x2 = int(cx + shield_radius * math.cos(rad))
+        y2 = int(cy + shield_radius * math.sin(rad))
+        cv2.line(frame, (x1, y1), (x2, y2), (255, 255, 255), 2)
+
+    # 4. Floating holographic header
+    cv2.putText(frame, "SONIC SHIELD ACTIVE", (cx - 110, cy - shield_radius - 12),
+                cv2.FONT_HERSHEY_DUPLEX, 0.58, (255, 255, 0), 2)
 
 # Spawn initial target
 target = spawn_target()
@@ -236,27 +273,41 @@ while cap.isOpened():
         # NOTE: The nose dot has been removed so your face remains completely clean!
         # (The code still tracks head coordinates in the background for laser ducking)
 
+        # ---------------------------------------------------------------------
+        # MULTIMODAL CLAP DETECTION (Wrists Close + Acoustic Energy Spike)
+        # ---------------------------------------------------------------------
+        wrist_dist = math.hypot(wrist_l[0] - wrist_r[0], wrist_l[1] - wrist_r[1])
+        # A clap occurs when wrists snap together (< 85px) with acoustic spike
+        is_clap = (wrist_dist < 85 and mic_volume > 0.04) or (wrist_dist < 65)
+
+        if is_clap and (current_time - shield_start_time > 1.6):
+            shield_active = True
+            shield_start_time = current_time
+            shield_center = ((wrist_l[0] + wrist_r[0]) // 2, (wrist_l[1] + wrist_r[1]) // 2)
+            create_explosion(shield_center[0], shield_center[1], (255, 255, 0), is_kiai=True)
+
     # -------------------------------------------------------------------------
     # GAMEPLAY LOGIC
     # -------------------------------------------------------------------------
     if GAME_STATE == "WAITING":
         # Overlay translucent start banner
         overlay = frame.copy()
-        cv2.rectangle(overlay, (40, 70), (WIDTH - 40, 410), (20, 20, 20), -1)
+        cv2.rectangle(overlay, (30, 60), (WIDTH - 30, 420), (20, 20, 20), -1)
         cv2.addWeighted(overlay, 0.85, frame, 0.15, 0, frame)
 
-        cv2.putText(frame, "SHADOW-BOXER", (WIDTH // 2 - 170, 125),
+        cv2.putText(frame, "SHADOW-BOXER", (WIDTH // 2 - 170, 115),
                     cv2.FONT_HERSHEY_DUPLEX, 1.1, (0, 255, 255), 2)
-        cv2.putText(frame, "Multimodal Kinetic & Acoustic AR Boxer", (WIDTH // 2 - 190, 160),
+        cv2.putText(frame, "Multimodal Kinetic & Acoustic AR Boxer", (WIDTH // 2 - 190, 150),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
 
-        cv2.putText(frame, "HOW TO PLAY:", (70, 205), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
-        cv2.putText(frame, "- Hit CYAN target with LEFT glove", (70, 235), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 200, 0), 1)
-        cv2.putText(frame, "- Hit RED target with RIGHT glove", (70, 265), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 100, 255), 1)
-        cv2.putText(frame, "- SHOUT / BATTLE CRY on impact for 5x KIAI CRITICAL!", (70, 295), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 215, 255), 1)
-        cv2.putText(frame, "- SQUAT & DUCK under the Laser Beam!", (70, 325), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+        cv2.putText(frame, "HOW TO PLAY:", (60, 190), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
+        cv2.putText(frame, "- Hit CYAN target with LEFT glove", (60, 220), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 200, 0), 1)
+        cv2.putText(frame, "- Hit RED target with RIGHT glove", (60, 250), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 100, 255), 1)
+        cv2.putText(frame, "- SHOUT / BATTLE CRY on impact for 5x KIAI CRITICAL!", (60, 280), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 215, 255), 1)
+        cv2.putText(frame, "- SQUAT to duck under the Laser Beam!", (60, 310), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+        cv2.putText(frame, "- OR CLAP HANDS to deploy SONIC SHIELD & parry laser!", (60, 340), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
 
-        cv2.putText(frame, "PRESS [SPACE] TO START", (WIDTH // 2 - 150, 385),
+        cv2.putText(frame, "PRESS [SPACE] TO START", (WIDTH // 2 - 150, 395),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
     elif GAME_STATE == "PLAYING":
@@ -266,11 +317,18 @@ while cap.isOpened():
         if time_left <= 0:
             GAME_STATE = "GAMEOVER"
 
+        # Check if Sonic Shield is actively deployed
+        is_shield_up = (current_time - shield_start_time) < shield_duration
+        if is_shield_up:
+            progress = (current_time - shield_start_time) / shield_duration
+            draw_sonic_shield(frame, shield_center[0], shield_center[1], progress)
+
         # 1. Update Laser Hazard (Every 10-14 seconds)
         if not laser_active and current_time >= next_laser_time:
             laser_active = True
             laser_start_time = current_time
             laser_dodged = False
+            laser_deflected = False
 
         if laser_active:
             laser_elapsed = current_time - laser_start_time
@@ -279,7 +337,7 @@ while cap.isOpened():
             # Flashing warning or deadly laser beam
             laser_color = (0, 0, 255) if int(current_time * 8) % 2 == 0 else (0, 255, 255)
             cv2.line(frame, (0, laser_y), (WIDTH, laser_y), laser_color, 4)
-            cv2.putText(frame, "! DUCK UNDER LASER !", (WIDTH // 2 - 130, laser_y - 12),
+            cv2.putText(frame, "! DUCK OR CLAP SHIELD !", (WIDTH // 2 - 155, laser_y - 12),
                         cv2.FONT_HERSHEY_DUPLEX, 0.7, laser_color, 2)
 
             # Check if player ducked
@@ -288,10 +346,24 @@ while cap.isOpened():
                 cv2.putText(frame, "NICE DODGE!", (WIDTH // 2 - 60, laser_y + 35),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
+            # Check if player deflected with Sonic Shield!
+            if is_shield_up:
+                laser_deflected = True
+                laser_dodged = True
+                cv2.putText(frame, "ELECTRIC SHIELD DEFLECTING LASER!", (WIDTH // 2 - 170, laser_y + 35),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 0), 2)
+
             if laser_elapsed >= laser_duration:
                 laser_active = False
                 next_laser_time = current_time + random.uniform(10, 16)
-                if laser_dodged:
+                if laser_deflected:
+                    score += 75  # Bonus reward for high-skill clap parry!
+                    shields_deflected += 1
+                    last_hit_text = "ELECTRIC SHIELD DEFLECTION! +75"
+                    last_hit_time = current_time
+                    screen_shake = 7
+                    create_explosion(WIDTH // 2, laser_y, (255, 255, 0), is_kiai=True)
+                elif laser_dodged:
                     score += 50
                     dodges_completed += 1
                     last_hit_text = "PERFECT DODGE! +50"
@@ -409,24 +481,30 @@ while cap.isOpened():
                     cv2.FONT_HERSHEY_DUPLEX, 0.95, (0, 255, 255), 2)
 
         # Workout & Kinetic Metrics
-        cal_burned = total_punches * 0.18 + dodges_completed * 0.5 + kiai_strikes * 0.35
+        cal_burned = total_punches * 0.18 + dodges_completed * 0.5 + kiai_strikes * 0.35 + shields_deflected * 0.6
         stats = [
             f"FINAL SCORE: {score}",
             f"PUNCHES LANDED: {total_punches}",
             f"KIAI POWER STRIKES: {kiai_strikes} (5x BOOST!)",
+            f"LASERS DEFLECTED: {shields_deflected} (CLAP PARRY!)",
             f"MAX COMBO: x{max_combo}",
             f"TOP PUNCH SPEED: {max_punch_speed:.1f} km/h",
             f"LASER DODGES: {dodges_completed}",
             f"EST. CALORIES BURNED: {cal_burned:.1f} kcal",
         ]
 
-        y_offset = 140
+        y_offset = 135
         for s in stats:
-            stat_color = (0, 215, 255) if "KIAI" in s else (230, 230, 230)
-            cv2.putText(frame, s, (75, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.62, stat_color, 2)
-            y_offset += 36
+            if "KIAI" in s:
+                stat_color = (0, 215, 255)
+            elif "DEFLECTED" in s:
+                stat_color = (255, 255, 0)
+            else:
+                stat_color = (230, 230, 230)
+            cv2.putText(frame, s, (75, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.60, stat_color, 2)
+            y_offset += 33
 
-        cv2.putText(frame, "Press 'R' to Play Again  |  'Q' to Quit", (WIDTH // 2 - 180, 410),
+        cv2.putText(frame, "Press 'R' to Play Again  |  'Q' to Quit", (WIDTH // 2 - 180, 415),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
     # Global footer: FPS & Controls
@@ -446,6 +524,9 @@ while cap.isOpened():
             combo = 0
             total_punches = 0
             kiai_strikes = 0
+            shields_deflected = 0
+            laser_deflected = False
+            shield_start_time = 0.0
             max_punch_speed = 0.0
             dodges_completed = 0
     elif key == ord('r'):  # Restart
@@ -455,8 +536,15 @@ while cap.isOpened():
         combo = 0
         total_punches = 0
         kiai_strikes = 0
+        shields_deflected = 0
+        laser_deflected = False
+        shield_start_time = 0.0
         max_punch_speed = 0.0
         dodges_completed = 0
+    elif key == ord('s'):  # Manual debug shortcut for Sonic Shield
+        if GAME_STATE == "PLAYING":
+            shield_start_time = current_time
+            create_explosion(WIDTH // 2, HEIGHT // 2, (255, 255, 0), is_kiai=True)
 
 cap.release()
 cv2.destroyAllWindows()

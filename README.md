@@ -37,11 +37,12 @@ Using **Google MediaPipe BlazePose** and real-time **RMS audio energy extraction
 
 ## ⚡ Features
 - **Multimodal "KIAI" Battle Cry:** Shouting or grunting while throwing a punch triggers a **5x Critical Power Strike** with dynamic screen shake and blazing golden particle bursts!
+- **Multimodal "Clap" Sonic Forcefield:** Clapping your hands together (dual-wrist proximity + acoustic transient spike) projects a glowing **Cyan Electric Forcefield** that parries laser hazards for **+75 Parry Points**!
 - **Zero-Latency Kinetic Controls:** Dual-wrist tracking with enlarged arcade boxing gloves (Cyan for Left, Flame Orange for Right).
-- **Physical Dodge Hazard:** Full-body kinetic engagement — players must physically squat/duck under sweeping laser beams.
+- **Physical Dodge Hazard:** Full-body kinetic engagement — players can either physically squat/duck under sweeping laser beams or deflect them with the Sonic Shield.
 - **Punch Velocity Physics:** Measures wrist displacement $(\Delta d / \Delta t)$ per frame to compute simulated punch impact speed in km/h.
 - **Dynamic Audio HUD:** Real-time microphone volume bar that turns into a flashing `"KIAI READY!"` state when your voice reaches battle energy.
-- **Workout Analytics:** Post-match summary calculates score, punch count, Kiai power strikes, peak velocity, dodges, and estimated calories burned.
+- **Workout Analytics:** Post-match summary calculates score, punch count, Kiai power strikes, laser deflections, peak velocity, dodges, and estimated calories burned.
 - **100% Offline & Private:** Zero GPU needed; runs on consumer CPU with TensorFlow Lite XNNPACK delegates.
 
 ---
