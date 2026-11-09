@@ -1,47 +1,48 @@
-# 🥊 Shadow-Boxer: Full-Body Kinetic Controller & AR Boxer
+# 🥊 Shadow-Boxer: Multimodal Kinetic & Acoustic AR Boxer
 
 > **Hackathon Track:** Beginners Track — *The Exploration Arena*  
-> **Key Special Awards Targeted:** *Built in a Cave with a Box of Scraps*, *Most Creative ML Use*, *People's Choice*
+> **Key Special Awards Targeted:** *Most Creative ML Use*, *Over-Engineered Masterpiece*, *Built in a Cave with a Box of Scraps*
 
 ---
 
 ## 🌟 Overview
-**Shadow-Boxer** is a zero-controller, real-time Human-Computer Interface (HCI) and Augmented Reality (AR) boxing game that turns any standard laptop webcam into a full-body motion controller. 
+**Shadow-Boxer** is a zero-controller, real-time Human-Computer Interface (HCI) and Augmented Reality (AR) boxing game that fuses **Computer Vision (Skeletal Pose Tracking)** and **Acoustic DSP (Non-Verbal Battle Cry Recognition)** into a seamless multimodal combat engine.
 
-Using **Google MediaPipe BlazePose**, it tracks skeletal landmarks at **30–60 FPS directly on local CPU / Integrated Graphics** without requiring an external GPU, specialized sensors, or cloud APIs.
+Using **Google MediaPipe BlazePose** and real-time **RMS audio energy extraction**, it runs at **30–60 FPS directly on local CPU / Integrated Graphics** without requiring an external GPU, specialized hardware, or cloud APIs.
 
 ```
-       [Webcam 640x480 @ 30-60 FPS]
-                   │
-                   ▼
-     [Google MediaPipe PoseLandmarker]
-       (Extracts 33 Skeletal Joints)
-                   │
-         ┌─────────┴─────────┐
-         ▼                   ▼
-  [Wrists (15, 16)]    [Nose (0) & Head]
-  Punch Collision,     Dodge / Ducking
-  Velocity & Combo     Laser Sweeps
-         │                   │
-         └─────────┬─────────┘
-                   ▼
-       [AR Game Engine (OpenCV)]
-    - Floating Hitboxes & Neon Pads
-    - Particle Spark Explosions
-    - Real-Time Punch Velocity (km/h)
-    - Dynamic Combo Multiplier
-    - Post-Round Workout Analytics
+ [Webcam 640x480 @ 60 FPS]          [Laptop Microphone Stream]
+             │                                   │
+             ▼                                   ▼
+[Google MediaPipe PoseLandmarker]     [Real-Time RMS Acoustic DSP]
+  (Extracts 33 Skeletal Joints)         (Kiai / Battle Cry Energy)
+             │                                   │
+      ┌──────┴──────┐                            │
+      ▼             ▼                            │
+ [Wrists 15/16]  [Head Ducking]                  │
+  Punch Vectors   Laser Dodges                   │
+      │             │                            │
+      └──────┬──────┘                            │
+             ▼                                   ▼
+        ┌─────────────────────────────────────────────┐
+        │       MULTIMODAL AR GAME ARBITER            │
+        │ - Standard Punch: +10 pts * Combo           │
+        │ - Punch + Shout: 5x KIAI CRITICAL (+50 pts) │
+        │ - Dynamic Screen Shake & Golden Explosions  │
+        │ - Laser Dodge Hazard & Workout Analytics    │
+        └─────────────────────────────────────────────┘
 ```
 
 ---
 
 ## ⚡ Features
-- **Zero-Latency Kinetic Controls:** Left hand (Cyan) and Right hand (Red) punch recognition with glowing AR boxing gloves.
-- **Physical Dodge Mechanic:** Full-body kinetic engagement — players must physically squat/duck under sweeping laser beams to avoid penalties.
+- **Multimodal "KIAI" Battle Cry:** Shouting or grunting while throwing a punch triggers a **5x Critical Power Strike** with dynamic screen shake and blazing golden particle bursts!
+- **Zero-Latency Kinetic Controls:** Dual-wrist tracking with enlarged arcade boxing gloves (Cyan for Left, Flame Orange for Right).
+- **Physical Dodge Hazard:** Full-body kinetic engagement — players must physically squat/duck under sweeping laser beams.
 - **Punch Velocity Physics:** Measures wrist displacement $(\Delta d / \Delta t)$ per frame to compute simulated punch impact speed in km/h.
-- **Particle System:** Procedural particle spark bursts trigger upon every successful target punch.
-- **Workout Analytics:** Post-match summary calculates score, punch count, peak velocity, dodges, and estimated calories burned.
-- **100% Offline & Private:** Video frames never leave your local machine.
+- **Dynamic Audio HUD:** Real-time microphone volume bar that turns into a flashing `"KIAI READY!"` state when your voice reaches battle energy.
+- **Workout Analytics:** Post-match summary calculates score, punch count, Kiai power strikes, peak velocity, dodges, and estimated calories burned.
+- **100% Offline & Private:** Zero GPU needed; runs on consumer CPU with TensorFlow Lite XNNPACK delegates.
 
 ---
 

@@ -4,18 +4,20 @@ import math
 import random
 import os
 import numpy as np
+import sounddevice as sd
 import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
 # -----------------------------------------------------------------------------
-# SHADOW-BOXER: AR ARCADE KINETIC BOXING GAME
+# SHADOW-BOXER: MULTIMODAL KINETIC & ACOUSTIC AR BOXING GAME
 # Features:
 # 1. Real-time Pose tracking on local CPU (No GPU needed!)
-# 2. Left & Right Punch Hitboxes with speed/velocity calculation
-# 3. Particle spark explosion effects on impact
-# 4. Laser Dodge Mechanic (Squat / Duck below the line!)
-# 5. Combo streaks, dynamic HUD, and post-game workout stats
+# 2. Multimodal "KIAI" Battle Cry: Shout while punching for Critical Hits!
+# 3. Dynamic Screen-Shake & Golden Fireball Explosions on Kiai impact
+# 4. Left & Right Punch Hitboxes with speed/velocity calculation (km/h)
+# 5. Laser Dodge Hazard (Squat / Duck below the line!)
+# 6. Combo streaks, dynamic Audio HUD, and post-game workout stats
 # -----------------------------------------------------------------------------
 
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "pose_landmarker_lite.task")
@@ -52,8 +54,38 @@ max_combo = 0
 total_punches = 0
 max_punch_speed = 0.0
 dodges_completed = 0
+kiai_strikes = 0
 last_hit_text = ""
 last_hit_time = 0
+
+# Screen Shake Effect (displaces frame when a heavy strike lands)
+screen_shake = 0
+
+# -----------------------------------------------------------------------------
+# MULTIMODAL AUDIO DSP (Kiai / Battle Cry Detection)
+# -----------------------------------------------------------------------------
+AUDIO_AVAILABLE = False
+mic_volume = 0.0
+KIAI_THRESHOLD = 0.075    # RMS threshold for shouting/yelling into microphone
+kiai_active = False
+kiai_trigger_time = 0.0
+
+def audio_callback(indata, frames, time_info, status):
+    global mic_volume, kiai_active, kiai_trigger_time
+    rms = float(np.sqrt(np.mean(indata**2)))
+    # Smooth microphone energy
+    mic_volume = mic_volume * 0.65 + rms * 0.35
+    if mic_volume > KIAI_THRESHOLD:
+        kiai_active = True
+        kiai_trigger_time = time.time()
+
+try:
+    audio_stream = sd.InputStream(channels=1, samplerate=16000, callback=audio_callback, blocksize=512)
+    audio_stream.start()
+    AUDIO_AVAILABLE = True
+    print("[Audio DSP] Microphone initialized! Kiai Battle Cry is ACTIVE.")
+except Exception as e:
+    print(f"[Audio DSP Warning] Could not open microphone: {e}. Falling back to Vision only.")
 
 # Wrist historical tracking for velocity calculation (pixels per second)
 prev_wrist_l = None
@@ -88,16 +120,26 @@ def spawn_target():
     y = random.randint(120, HEIGHT - 140)
     return {"x": x, "y": y, "radius": TARGET_RADIUS, "hand": hand_type, "spawn_time": time.time()}
 
-def create_explosion(x, y, color):
+def create_explosion(x, y, color, is_kiai=False):
     """Create flying glowing particle sparks when target explodes."""
-    for _ in range(16):
+    count = 36 if is_kiai else 16
+    speed_max = 16 if is_kiai else 11
+    
+    for _ in range(count):
         angle = random.uniform(0, 2 * math.pi)
-        speed = random.uniform(4, 12)
+        speed = random.uniform(4, speed_max)
         vx = math.cos(angle) * speed
         vy = math.sin(angle) * speed
-        size = random.randint(3, 7)
-        life = random.randint(10, 20)  # frames to live
-        particles.append({"x": x, "y": y, "vx": vx, "vy": vy, "size": size, "life": life, "max_life": life, "color": color})
+        size = random.randint(4, 9) if is_kiai else random.randint(3, 6)
+        life = random.randint(14, 25) if is_kiai else random.randint(10, 18)
+        
+        # Kiai explosion uses fiery golden & blazing orange sparks!
+        if is_kiai:
+            p_color = random.choice([(0, 215, 255), (0, 100, 255), (255, 255, 255), (0, 255, 255)])
+        else:
+            p_color = color
+            
+        particles.append({"x": x, "y": y, "vx": vx, "vy": vy, "size": size, "life": life, "max_life": life, "color": p_color})
 
 def update_and_draw_particles(frame):
     for p in particles[:]:
@@ -130,6 +172,15 @@ while cap.isOpened():
 
     # Flip horizontally for intuitive mirror reflection
     frame = cv2.flip(frame, 1)
+
+    # Apply Dynamic Screen Shake if active (triggered by Kiai Battle Cry)
+    if screen_shake > 0:
+        dx = random.randint(-8, 8)
+        dy = random.randint(-8, 8)
+        M = np.float32([[1, 0, dx], [0, 1, dy]])
+        frame = cv2.warpAffine(frame, M, (WIDTH, HEIGHT))
+        screen_shake -= 1
+
     current_time = time.time()
     dt = current_time - last_pose_time if (current_time - last_pose_time) > 0 else 0.033
     last_pose_time = current_time
@@ -191,20 +242,21 @@ while cap.isOpened():
     if GAME_STATE == "WAITING":
         # Overlay translucent start banner
         overlay = frame.copy()
-        cv2.rectangle(overlay, (40, 100), (WIDTH - 40, 380), (20, 20, 20), -1)
-        cv2.addWeighted(overlay, 0.8, frame, 0.2, 0, frame)
+        cv2.rectangle(overlay, (40, 70), (WIDTH - 40, 410), (20, 20, 20), -1)
+        cv2.addWeighted(overlay, 0.85, frame, 0.15, 0, frame)
 
-        cv2.putText(frame, "SHADOW-BOXER", (WIDTH // 2 - 170, 160),
+        cv2.putText(frame, "SHADOW-BOXER", (WIDTH // 2 - 170, 125),
                     cv2.FONT_HERSHEY_DUPLEX, 1.1, (0, 255, 255), 2)
-        cv2.putText(frame, "AI Kinetic Punching & Dodging", (WIDTH // 2 - 165, 200),
+        cv2.putText(frame, "Multimodal Kinetic & Acoustic AR Boxer", (WIDTH // 2 - 190, 160),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
 
-        cv2.putText(frame, "HOW TO PLAY:", (80, 245), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
-        cv2.putText(frame, "- Hit CYAN target with LEFT glove", (80, 275), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 200, 0), 1)
-        cv2.putText(frame, "- Hit RED target with RIGHT glove", (80, 305), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 100, 255), 1)
-        cv2.putText(frame, "- SQUAT & DUCK under the Laser Beam!", (80, 335), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+        cv2.putText(frame, "HOW TO PLAY:", (70, 205), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
+        cv2.putText(frame, "- Hit CYAN target with LEFT glove", (70, 235), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 200, 0), 1)
+        cv2.putText(frame, "- Hit RED target with RIGHT glove", (70, 265), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 100, 255), 1)
+        cv2.putText(frame, "- SHOUT / BATTLE CRY on impact for 5x KIAI CRITICAL!", (70, 295), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 215, 255), 1)
+        cv2.putText(frame, "- SQUAT & DUCK under the Laser Beam!", (70, 325), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
 
-        cv2.putText(frame, "PRESS [SPACE] TO START", (WIDTH // 2 - 150, 370),
+        cv2.putText(frame, "PRESS [SPACE] TO START", (WIDTH // 2 - 150, 385),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
     elif GAME_STATE == "PLAYING":
@@ -280,7 +332,16 @@ while cap.isOpened():
                     hit_speed = speed_r
 
             if hit:
-                create_explosion(target["x"], target["y"], t_color)
+                # Check if Kiai Battle Cry was shouted within the last 0.6 seconds!
+                is_kiai = (current_time - kiai_trigger_time) < 0.6
+
+                if is_kiai:
+                    kiai_strikes += 1
+                    screen_shake = 10  # Violently shake screen on Kiai impact!
+                    create_explosion(target["x"], target["y"], t_color, is_kiai=True)
+                else:
+                    create_explosion(target["x"], target["y"], t_color, is_kiai=False)
+
                 total_punches += 1
                 combo += 1
                 if combo > max_combo:
@@ -291,9 +352,15 @@ while cap.isOpened():
                 if kmh > max_punch_speed:
                     max_punch_speed = kmh
 
-                points = 10 * combo
-                score += points
-                last_hit_text = f"+{points} PUNCH! ({kmh:.1f} km/h)"
+                if is_kiai:
+                    points = 50 * combo  # 5x massive score bonus for Kiai!
+                    score += points
+                    last_hit_text = f"FIRE KIAI CRITICAL! +{points} ({kmh:.1f} km/h)"
+                else:
+                    points = 10 * combo
+                    score += points
+                    last_hit_text = f"+{points} PUNCH! ({kmh:.1f} km/h)"
+
                 last_hit_time = current_time
 
                 # Spawn next target immediately
@@ -310,41 +377,60 @@ while cap.isOpened():
         combo_color = (0, 255, 0) if combo < 5 else (0, 165, 255)
         cv2.putText(frame, f"COMBO: x{combo}", (WIDTH - 160, 32), cv2.FONT_HERSHEY_DUPLEX, 0.7, combo_color, 2)
 
+        # Real-Time Microphone Acoustic / Kiai HUD Pill (Bottom Left)
+        is_kiai_ready = (current_time - kiai_trigger_time) < 0.6
+        mic_bar_w = int(min(1.0, mic_volume / (KIAI_THRESHOLD * 1.5)) * 110)
+
+        cv2.rectangle(frame, (10, HEIGHT - 55), (185, HEIGHT - 22), (25, 25, 25), -1)
+        if is_kiai_ready:
+            # Flashing Gold/Red Kiai Ready indicator!
+            cv2.rectangle(frame, (10, HEIGHT - 55), (185, HEIGHT - 22), (0, 165, 255), 2)
+            cv2.putText(frame, "KIAI READY!", (22, HEIGHT - 33),
+                        cv2.FONT_HERSHEY_DUPLEX, 0.48, (0, 215, 255), 1)
+        else:
+            # Live volume energy bar
+            cv2.rectangle(frame, (18, HEIGHT - 33), (18 + mic_bar_w, HEIGHT - 27), (0, 255, 100), -1)
+            cv2.putText(frame, "VOICE / KIAI", (18, HEIGHT - 38),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.38, (180, 180, 180), 1)
+
         # Floating Hit Impact Toast
         if current_time - last_hit_time < 1.2:
-            cv2.putText(frame, last_hit_text, (WIDTH // 2 - 120, 90),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 255), 2)
+            toast_color = (0, 215, 255) if "KIAI" in last_hit_text else (0, 255, 255)
+            cv2.putText(frame, last_hit_text, (WIDTH // 2 - 140, 90),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, toast_color, 2)
 
     elif GAME_STATE == "GAMEOVER":
         # Post-game summary card
         overlay = frame.copy()
-        cv2.rectangle(overlay, (50, 60), (WIDTH - 50, 420), (15, 15, 15), -1)
+        cv2.rectangle(overlay, (45, 50), (WIDTH - 45, 430), (15, 15, 15), -1)
         cv2.addWeighted(overlay, 0.88, frame, 0.12, 0, frame)
 
-        cv2.putText(frame, "ROUND FINISHED!", (WIDTH // 2 - 150, 110),
+        cv2.putText(frame, "ROUND FINISHED!", (WIDTH // 2 - 150, 95),
                     cv2.FONT_HERSHEY_DUPLEX, 0.95, (0, 255, 255), 2)
 
-        # Workout Metrics
-        cal_burned = total_punches * 0.18 + dodges_completed * 0.5
+        # Workout & Kinetic Metrics
+        cal_burned = total_punches * 0.18 + dodges_completed * 0.5 + kiai_strikes * 0.35
         stats = [
             f"FINAL SCORE: {score}",
             f"PUNCHES LANDED: {total_punches}",
+            f"KIAI POWER STRIKES: {kiai_strikes} (5x BOOST!)",
             f"MAX COMBO: x{max_combo}",
             f"TOP PUNCH SPEED: {max_punch_speed:.1f} km/h",
             f"LASER DODGES: {dodges_completed}",
             f"EST. CALORIES BURNED: {cal_burned:.1f} kcal",
         ]
 
-        y_offset = 160
+        y_offset = 140
         for s in stats:
-            cv2.putText(frame, s, (90, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (230, 230, 230), 2)
+            stat_color = (0, 215, 255) if "KIAI" in s else (230, 230, 230)
+            cv2.putText(frame, s, (75, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.62, stat_color, 2)
             y_offset += 36
 
-        cv2.putText(frame, "Press 'R' to Play Again  |  'Q' to Quit", (WIDTH // 2 - 180, 400),
+        cv2.putText(frame, "Press 'R' to Play Again  |  'Q' to Quit", (WIDTH // 2 - 180, 410),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
     # Global footer: FPS & Controls
-    cv2.putText(frame, f"FPS: {int(fps)} (CPU)", (10, HEIGHT - 10),
+    cv2.putText(frame, f"FPS: {int(fps)} (CPU)", (10, HEIGHT - 8),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.45, (100, 255, 100), 1)
 
     cv2.imshow("SHADOW-BOXER: Kinetic AR Punching Game", frame)
@@ -359,6 +445,7 @@ while cap.isOpened():
             score = 0
             combo = 0
             total_punches = 0
+            kiai_strikes = 0
             max_punch_speed = 0.0
             dodges_completed = 0
     elif key == ord('r'):  # Restart
@@ -367,9 +454,16 @@ while cap.isOpened():
         score = 0
         combo = 0
         total_punches = 0
+        kiai_strikes = 0
         max_punch_speed = 0.0
         dodges_completed = 0
 
 cap.release()
 cv2.destroyAllWindows()
 detector.close()
+if AUDIO_AVAILABLE:
+    try:
+        audio_stream.stop()
+        audio_stream.close()
+    except Exception:
+        pass
