@@ -89,6 +89,53 @@ def _build_start_sound():
     bell = (np.sin(2 * np.pi * 880 * t) + 0.5 * np.sin(2 * np.pi * 1760 * t)) * np.exp(-4 * t)
     return _to_sound(bell)
 
+def _build_powerup_sound():
+    sr = 44100
+    duration = 0.38
+    t = np.linspace(0, duration, int(sr * duration), False)
+    # Rising magical arpeggio sweep
+    freq = np.linspace(400, 1200, len(t))
+    tone = np.sin(2 * np.pi * freq * t) + 0.4 * np.sin(4 * np.pi * freq * t)
+    sparkle = 0.3 * np.sin(2 * np.pi * 2400 * t) * np.sin(2 * np.pi * 32 * t)
+    env = np.clip(1.0 - t / duration, 0, 1) ** 0.8
+    return _to_sound((tone + sparkle) * env)
+
+def _build_boss_spawn_sound():
+    sr = 44100
+    duration = 0.85
+    t = np.linspace(0, duration, int(sr * duration), False)
+    # Deep ominous cyber warhorn / klaxon
+    base_freq = 95 - 25 * (t / duration)
+    vibrato = 12 * np.sin(2 * np.pi * 6.5 * t)
+    horn = np.sin(2 * np.pi * (base_freq + vibrato) * t)
+    horn += 0.5 * np.sin(4 * np.pi * (base_freq + vibrato) * t)
+    env = np.minimum(t * 12.0, 1.0) * np.exp(-1.8 * t)
+    return _to_sound(horn * env * 0.9)
+
+def _build_boss_hit_sound():
+    sr = 44100
+    duration = 0.18
+    t = np.linspace(0, duration, int(sr * duration), False)
+    # Heavy metallic crunch
+    bass = np.sin(2 * np.pi * np.linspace(160, 40, len(t)) * t)
+    metal = np.sin(2 * np.pi * 780 * t) * np.exp(-25 * t)
+    crunch = np.clip(np.random.normal(0, 0.7, len(t)), -0.9, 0.9)
+    env = np.exp(-12 * t)
+    return _to_sound((0.5 * bass + 0.3 * metal + 0.4 * crunch) * env)
+
+def _build_boss_defeat_sound():
+    sr = 44100
+    duration = 0.95
+    t = np.linspace(0, duration, int(sr * duration), False)
+    # Dramatic explosion transitioning into high triumph chord
+    boom = np.sin(2 * np.pi * np.linspace(140, 25, len(t)) * t) * np.exp(-3.2 * t)
+    noise = np.random.uniform(-0.5, 0.5, len(t)) * np.exp(-4.5 * t)
+    # Triumph chord (Major triad)
+    chord = (np.sin(2 * np.pi * 523.25 * t) + np.sin(2 * np.pi * 659.25 * t) + np.sin(2 * np.pi * 783.99 * t)) / 3.0
+    chord_env = np.clip((t - 0.15) * 4.0, 0, 1) * np.exp(-2.2 * (t - 0.15))
+    chord_env[t < 0.15] = 0
+    return _to_sound((0.6 * boom + 0.4 * noise + 0.7 * chord * chord_env))
+
 # Pre-synthesize sounds if mixer is available
 if SOUND_AVAILABLE:
     try:
@@ -98,9 +145,41 @@ if SOUND_AVAILABLE:
         _sounds["laser"] = _build_laser_sound()
         _sounds["start"] = _build_start_sound()
         _sounds["chimes"] = _build_combo_chimes()
+        _sounds["powerup"] = _build_powerup_sound()
+        _sounds["boss_spawn"] = _build_boss_spawn_sound()
+        _sounds["boss_hit"] = _build_boss_hit_sound()
+        _sounds["boss_defeat"] = _build_boss_defeat_sound()
     except Exception as e:
         print(f"[Sound FX Error] Pre-rendering waveforms failed: {e}")
         SOUND_AVAILABLE = False
+
+# -----------------------------------------------------------------------------
+# HARDWARE HAPTIC FEEDBACK (Arduino Serial Integration Stub)
+# -----------------------------------------------------------------------------
+_arduino_serial = None
+HAPTIC_ENABLED = False
+
+def init_haptic(port=None, baudrate=115200):
+    """Attempt connection to Arduino microcontroller for haptic motor feedback."""
+    global _arduino_serial, HAPTIC_ENABLED
+    try:
+        import serial
+        if port:
+            _arduino_serial = serial.Serial(port, baudrate, timeout=0.05)
+            HAPTIC_ENABLED = True
+            print(f"[Haptic] Connected to Arduino on {port}!")
+    except Exception as e:
+        # Gracefully handle when Arduino is not plugged in
+        HAPTIC_ENABLED = False
+
+def trigger_haptic(event_name="punch"):
+    """Send vibration pulse command ('P'=Punch, 'K'=Kiai, 'S'=Shield, 'B'=Boss) to Arduino."""
+    if HAPTIC_ENABLED and _arduino_serial:
+        try:
+            cmd = {"punch": b'P', "kiai": b'K', "shield": b'S', "boss": b'B', "powerup": b'U'}.get(event_name, b'P')
+            _arduino_serial.write(cmd)
+        except Exception:
+            pass
 
 def play_sfx(name, combo_idx=0):
     """Play a procedural sound effect asynchronously."""

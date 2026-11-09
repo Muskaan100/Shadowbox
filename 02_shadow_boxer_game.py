@@ -8,24 +8,43 @@ import sounddevice as sd
 import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
-from sound_fx import play_sfx
+from sound_fx import play_sfx, trigger_haptic, init_haptic
 
 # -----------------------------------------------------------------------------
-# SHADOW-BOXER: MULTIMODAL KINETIC & ACOUSTIC AR BOXING GAME
-# Features:
-# 1. Real-time Pose tracking on local CPU (No GPU needed!)
-# 2. Multimodal "KIAI" Battle Cry: Shout while punching for Critical Hits!
-# 3. Dynamic Screen-Shake & Golden Fireball Explosions on Kiai impact
-# 4. Left & Right Punch Hitboxes with speed/velocity calculation (km/h)
-# 5. Laser Dodge Hazard (Squat / Duck below the line!)
-# 6. Combo streaks, dynamic Audio HUD, and post-game workout stats
+# SHADOW-BOXER: MULTIMODAL KINETIC & ACOUSTIC AR BOXING GAME (ULTIMATE EDITION)
+# Major Enhancements:
+# 1. Full-Screen Native Resolution with dynamic responsive UI scaling
+# 2. Optimized CPU Pipeline: Fast downsampled pose inference + sub-pixel EMA smoothing
+# 3. Massive Arcade Boxing Gloves + Glowing Fist Reticles & Swept Continuous Hitboxes
+# 4. Multimodal KIAI Battle Cry (Microphone DSP) & Sonic Clap Forcefield Deflection
+# 5. Dynamic Mini-Boss Waves with Armor, Floating Health Bars & Sound Fanfares
+# 6. Glowing Power-Up Orbs: 2x Damage, Slow-Mo, 3x Score, Rapid Fury, Titanium Shield
+# 7. Pause Menu (P key), Fullscreen Toggle (F key), and Local Persistence Ready
 # -----------------------------------------------------------------------------
 
+# 1. Screen & Window Configuration (Native Fullscreen Detection)
+try:
+    import ctypes
+    user32 = ctypes.windll.user32
+    SCREEN_WIDTH = user32.GetSystemMetrics(0)
+    SCREEN_HEIGHT = user32.GetSystemMetrics(1)
+except Exception:
+    SCREEN_WIDTH = 1280
+    SCREEN_HEIGHT = 720
+
+# Dynamic layout scale factor (baseline is 720p)
+SCALE = max(0.8, min(2.5, SCREEN_HEIGHT / 720.0))
+WINDOW_NAME = "SHADOW-BOXER: Kinetic AR Boxing"
+is_fullscreen = True
+
+cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
+cv2.setWindowProperty(WINDOW_NAME, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+
+# 2. Initialize MediaPipe Detector (CPU Optimized)
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "pose_landmarker_lite.task")
 if not os.path.exists(MODEL_PATH):
     raise FileNotFoundError(f"Model file not found at {MODEL_PATH}")
 
-# 1. Initialize MediaPipe Detector
 base_options = python.BaseOptions(model_asset_path=MODEL_PATH)
 options = vision.PoseLandmarkerOptions(
     base_options=base_options,
@@ -35,19 +54,25 @@ options = vision.PoseLandmarkerOptions(
 )
 detector = vision.PoseLandmarker.create_from_options(options)
 
-# 2. Camera Setup
+# 3. Camera Setup
 cap = cv2.VideoCapture(0)
-WIDTH = 640
-HEIGHT = 480
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, WIDTH)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, HEIGHT)
+CAM_W = 640
+CAM_H = 480
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAM_W)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAM_H)
+
+# Fast inference resolution for MediaPipe on CPU (eliminates lag & stutter)
+INFER_W = 384
+INFER_H = 288
 
 # -----------------------------------------------------------------------------
 # GAME STATE & VARIABLES
 # -----------------------------------------------------------------------------
-GAME_STATE = "WAITING"   # "WAITING", "PLAYING", "GAMEOVER"
+GAME_STATE = "WAITING"   # "WAITING", "PLAYING", "PAUSED", "GAMEOVER"
 GAME_DURATION = 60       # 60 seconds round
-round_start_time = 0
+round_start_time = 0.0
+pause_start_time = 0.0
+total_paused_duration = 0.0
 
 score = 0
 combo = 0
@@ -56,10 +81,10 @@ total_punches = 0
 max_punch_speed = 0.0
 dodges_completed = 0
 kiai_strikes = 0
+bosses_defeated = 0
+powerups_collected = 0
 last_hit_text = ""
-last_hit_time = 0
-
-# Screen Shake Effect (displaces frame when a heavy strike lands)
+last_hit_time = 0.0
 screen_shake = 0
 
 # -----------------------------------------------------------------------------
@@ -74,7 +99,6 @@ kiai_trigger_time = 0.0
 def audio_callback(indata, frames, time_info, status):
     global mic_volume, kiai_active, kiai_trigger_time
     rms = float(np.sqrt(np.mean(indata**2)))
-    # Smooth microphone energy
     mic_volume = mic_volume * 0.65 + rms * 0.35
     if mic_volume > KIAI_THRESHOLD:
         kiai_active = True
@@ -88,63 +112,173 @@ try:
 except Exception as e:
     print(f"[Audio DSP Warning] Could not open microphone: {e}. Falling back to Vision only.")
 
-# Wrist historical tracking for velocity calculation (pixels per second)
-prev_wrist_l = None
-prev_wrist_r = None
+# Initialize optional Arduino haptic stub
+init_haptic()
+
+# -----------------------------------------------------------------------------
+# TRACKING & SMOOTHING (EMA filter for zero-lag, jitter-free hands)
+# -----------------------------------------------------------------------------
+smooth_wrist_l = None
+smooth_wrist_r = None
+smooth_elbow_l = None
+smooth_elbow_r = None
+smooth_nose = None
+
+prev_fist_l = None
+prev_fist_r = None
 last_pose_time = time.time()
 
-# Target data: (x, y, radius, hand_type: 'LEFT' or 'RIGHT', spawn_time)
-target = None
-TARGET_RADIUS = 45
-GLOVE_RADIUS = 35
+# Radii scaled to native resolution
+TARGET_RADIUS = int(48 * SCALE)
+BASE_GLOVE_RADIUS = int(58 * SCALE)
+GLOVE_RADIUS = BASE_GLOVE_RADIUS
 
-# Laser Dodge Hazard
+# Laser Hazard
 laser_active = False
-laser_y = 200
-laser_start_time = 0
-laser_duration = 3.5  # duration laser stays active
+laser_y = int(SCREEN_HEIGHT * 0.38)
+laser_start_time = 0.0
+laser_duration = 3.5
 next_laser_time = time.time() + random.uniform(8, 14)
 laser_dodged = False
 laser_deflected = False
 
-# -----------------------------------------------------------------------------
-# SONIC FORCEFIELD SHIELD (Multimodal Clap Detection)
-# -----------------------------------------------------------------------------
+# Sonic Forcefield Shield (Clap Detection)
 shield_active = False
 shield_start_time = 0.0
-shield_duration = 1.4       # Forcefield lasts 1.4 seconds
+shield_duration = 1.4
 shields_deflected = 0
-shield_center = (WIDTH // 2, HEIGHT // 2)
+shield_center = (SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2)
 
-# Particle System for Hit Explosions
+# Particle System
 particles = []
 
+# -----------------------------------------------------------------------------
+# POWER-UP SYSTEM
+# -----------------------------------------------------------------------------
+POWERUP_TYPES = {
+    "DOUBLE_DMG": {
+        "name": "DOUBLE DAMAGE",
+        "label": "2X DMG",
+        "color": (0, 120, 255),       # Fiery Orange/Red
+        "duration": 8.0,
+        "icon": "2X"
+    },
+    "SLOW_MO": {
+        "name": "SLOW MOTION",
+        "label": "SLOW-MO",
+        "color": (255, 240, 50),      # Ice Cyan
+        "duration": 7.5,
+        "icon": "SL"
+    },
+    "SCORE_BOOST": {
+        "name": "3X SCORE MULTIPLIER",
+        "label": "3X SCORE",
+        "color": (0, 215, 255),       # Golden Sun
+        "duration": 8.0,
+        "icon": "3X"
+    },
+    "RAPID_FURY": {
+        "name": "RAPID FURY GLOVES",
+        "label": "FURY",
+        "color": (240, 50, 220),      # Neon Violet
+        "duration": 8.0,
+        "icon": "FR"
+    },
+    "SHIELD": {
+        "name": "TITANIUM SHIELD",
+        "label": "SHIELD",
+        "color": (60, 255, 80),       # Emerald Neon
+        "duration": 8.0,
+        "icon": "SH"
+    }
+}
+
+active_powerup = None
+powerup_end_time = 0.0
+powerup_target = None
+next_powerup_spawn_time = 0.0
+
+# -----------------------------------------------------------------------------
+# MINI-BOSS SYSTEM
+# -----------------------------------------------------------------------------
+boss_active = False
+boss_data = None
+# Waves scheduled at seconds remaining in round
+BOSS_WAVE_TIMERS = [42, 20]
+boss_waves_spawned = set()
+
 def spawn_target():
-    """Spawn a new target on screen matching appropriate hand reach."""
+    """Spawn a regular target matching appropriate reach zone."""
     hand_type = random.choice(["LEFT", "RIGHT"])
+    margin_x = int(100 * SCALE)
+    margin_y_top = int(140 * SCALE)
+    margin_y_bottom = int(160 * SCALE)
+    
     if hand_type == "LEFT":
-        # Left side of screen (user's left)
-        x = random.randint(80, int(WIDTH * 0.42))
+        x = random.randint(margin_x, int(SCREEN_WIDTH * 0.44))
     else:
-        # Right side of screen
-        x = random.randint(int(WIDTH * 0.58), WIDTH - 80)
-    y = random.randint(120, HEIGHT - 140)
+        x = random.randint(int(SCREEN_WIDTH * 0.56), SCREEN_WIDTH - margin_x)
+        
+    y = random.randint(margin_y_top, SCREEN_HEIGHT - margin_y_bottom)
     return {"x": x, "y": y, "radius": TARGET_RADIUS, "hand": hand_type, "spawn_time": time.time()}
 
-def create_explosion(x, y, color, is_kiai=False):
-    """Create flying glowing particle sparks when target explodes."""
-    count = 36 if is_kiai else 16
-    speed_max = 16 if is_kiai else 11
-    
+def spawn_powerup_target():
+    """Spawn a special glowing power-up orb."""
+    ptype = random.choice(list(POWERUP_TYPES.keys()))
+    margin_x = int(120 * SCALE)
+    x = random.randint(margin_x, SCREEN_WIDTH - margin_x)
+    y = random.randint(int(150 * SCALE), int(SCREEN_HEIGHT * 0.68))
+    radius = int(42 * SCALE)
+    return {
+        "x": x,
+        "y": y,
+        "radius": radius,
+        "type": ptype,
+        "spawn_time": time.time(),
+        "duration": 9.0  # Disappears if not hit in 9s
+    }
+
+def spawn_mini_boss(wave_index=1):
+    """Spawn a multi-hit mechanical mini-boss encounter."""
+    max_hp = 6 if wave_index == 1 else 10
+    name = "MECHA-BRUTE" if wave_index == 1 else "CYBER-TITAN"
+    radius = int(82 * SCALE)
+    boss = {
+        "x": SCREEN_WIDTH // 2,
+        "y": int(SCREEN_HEIGHT * 0.40),
+        "radius": radius,
+        "hp": max_hp,
+        "max_hp": max_hp,
+        "name": name,
+        "hit_flash_time": 0.0,
+        "spawn_time": time.time(),
+        "wave": wave_index,
+        "base_x": SCREEN_WIDTH // 2,
+        "base_y": int(SCREEN_HEIGHT * 0.40),
+    }
+    play_sfx("boss_spawn")
+    trigger_haptic("boss")
+    return boss
+
+target = spawn_target()
+
+# -----------------------------------------------------------------------------
+# GRAPHICS & VISUAL FX FUNCTIONS
+# -----------------------------------------------------------------------------
+def create_explosion(x, y, color, count=24, speed_max=14, is_kiai=False):
+    """Create flying glowing particle sparks when strikes land."""
+    if is_kiai:
+        count = 42
+        speed_max = 19
+        
     for _ in range(count):
         angle = random.uniform(0, 2 * math.pi)
         speed = random.uniform(4, speed_max)
         vx = math.cos(angle) * speed
         vy = math.sin(angle) * speed
-        size = random.randint(4, 9) if is_kiai else random.randint(3, 6)
-        life = random.randint(14, 25) if is_kiai else random.randint(10, 18)
+        size = int(random.randint(4, 9) * SCALE) if is_kiai else int(random.randint(3, 6) * SCALE)
+        life = random.randint(14, 26) if is_kiai else random.randint(10, 18)
         
-        # Kiai explosion uses fiery golden & blazing orange sparks!
         if is_kiai:
             p_color = random.choice([(0, 215, 255), (0, 100, 255), (255, 255, 255), (0, 255, 255)])
         else:
@@ -163,225 +297,566 @@ def update_and_draw_particles(frame):
         if p["life"] <= 0:
             particles.remove(p)
 
-def draw_sonic_shield(frame, cx, cy, progress):
-    """Draw an electric arcade forcefield hex-shield when player claps."""
-    alpha = max(0.0, 1.0 - progress)
-    shield_radius = int(85 + math.sin(time.time() * 16) * 8)
+def dist_point_to_segment(p1, p2, c):
+    """Calculate shortest distance from center circle point to line segment (p1->p2)."""
+    if p1 is None and p2 is None:
+        return 999999.0
+    if p1 is None:
+        return math.hypot(c[0] - p2[0], c[1] - p2[1])
+    if p2 is None:
+        return math.hypot(c[0] - p1[0], c[1] - p1[1])
+    x1, y1 = p1
+    x2, y2 = p2
+    cx, cy = c
+    dx = x2 - x1
+    dy = y2 - y1
+    seg_len_sq = dx * dx + dy * dy
+    if seg_len_sq == 0:
+        return math.hypot(cx - x1, cy - y1)
+    t = max(0.0, min(1.0, ((cx - x1) * dx + (cy - y1) * dy) / seg_len_sq))
+    proj_x = x1 + t * dx
+    proj_y = y1 + t * dy
+    return math.hypot(cx - proj_x, cy - proj_y)
 
-    # 1. Outer shockwave ripple expanding outward
-    shock_r = int(shield_radius + progress * 45)
-    cv2.circle(frame, (cx, cy), shock_r, (255, 255, 200), max(1, int(2 * alpha)))
-
-    # 2. Concentric glowing forcefield rings
-    cv2.circle(frame, (cx, cy), shield_radius, (255, 240, 0), 3)       # Cyan/Electric outer ring
-    cv2.circle(frame, (cx, cy), shield_radius - 14, (255, 255, 255), 2) # White core ring
-    cv2.circle(frame, (cx, cy), max(8, shield_radius - 30), (255, 200, 50), 2)
-
-    # 3. Geometric hex spokes
-    for angle_deg in (0, 60, 120, 180, 240, 300):
-        rad = math.radians(angle_deg)
-        x1 = int(cx + (shield_radius - 30) * math.cos(rad))
-        y1 = int(cy + (shield_radius - 30) * math.sin(rad))
-        x2 = int(cx + shield_radius * math.cos(rad))
-        y2 = int(cy + shield_radius * math.sin(rad))
-        cv2.line(frame, (x1, y1), (x2, y2), (255, 255, 255), 2)
-
-    # 4. Floating holographic header
-    cv2.putText(frame, "SONIC SHIELD ACTIVE", (cx - 110, cy - shield_radius - 12),
-                cv2.FONT_HERSHEY_DUPLEX, 0.58, (255, 255, 0), 2)
-
-def draw_boxing_glove(frame, wrist, elbow, is_left=True, speed=0.0):
-    """Render a stylized arcade boxing glove with knuckle padding, thumb, strap & highlights."""
+def get_fist_point(wrist, elbow):
+    """Project knuckle center forward along forearm punch angle."""
     wx, wy = wrist
     if elbow:
         ex, ey = elbow
         rad = math.atan2(wy - ey, wx - ex)
-        deg = math.degrees(rad)
     else:
         rad = -math.pi / 2
-        deg = -90
+    offset = int(32 * SCALE)
+    fx = int(wx + offset * math.cos(rad))
+    fy = int(wy + offset * math.sin(rad))
+    return (fx, fy), rad
 
-    # Colors: Electric Cyan for Left, Vivid Crimson for Right
-    main_color = (245, 185, 20) if is_left else (20, 45, 245)
-    shadow_color = (170, 100, 0) if is_left else (10, 20, 150)
-    cuff_color = (240, 240, 240)
+def draw_boxing_glove(frame, wrist, elbow, is_left=True, speed=0.0, is_fury=False):
+    """Render an enlarged, stylized arcade boxing glove with high-visibility knuckle reticle."""
+    wx, wy = wrist
+    (fx, fy), rad = get_fist_point(wrist, elbow)
+    deg = math.degrees(rad)
 
-    # Forward fist projection (moves knuckle dome forward in punch direction)
-    fx = int(wx + 22 * math.cos(rad))
-    fy = int(wy + 22 * math.sin(rad))
+    # Vivid High-Contrast Arcade Palette
+    if is_fury:
+        main_color = (255, 60, 220)      # Neon Fury Violet
+        shadow_color = (160, 20, 140)
+        cuff_color = (255, 255, 255)
+    else:
+        main_color = (255, 195, 25) if is_left else (25, 55, 255)
+        shadow_color = (175, 105, 0) if is_left else (10, 20, 160)
+        cuff_color = (245, 245, 245)
 
-    # Perpendicular unit vector
     px = -math.sin(rad)
     py = math.cos(rad)
 
-    # Speed Trail effect when throwing a fast punch!
-    if speed > 18:
+    # 1. Trailing Fire / Speed After-Images
+    if speed > 16 or is_fury:
         trail_color = (0, 215, 255) if is_left else (0, 140, 255)
-        for offset in (16, 30):
+        if is_fury:
+            trail_color = (255, 50, 200)
+        for offset in (int(20 * SCALE), int(38 * SCALE)):
             tx = int(fx - offset * math.cos(rad))
             ty = int(fy - offset * math.sin(rad))
-            cv2.ellipse(frame, (tx, ty), (32, 22), deg, 0, 360, trail_color, 2)
+            cv2.ellipse(frame, (tx, ty), (int(42 * SCALE), int(30 * SCALE)), deg, 0, 360, trail_color, 2)
 
-    # 1. Wrist Cuff (White padded velcro strap right at wrist joint)
-    cuff_p1 = (int(wx + px * 22), int(wy + py * 22))
-    cuff_p2 = (int(wx - px * 22), int(wy - py * 22))
-    cv2.line(frame, cuff_p1, cuff_p2, (15, 15, 15), 16)      # Black outline
-    cv2.line(frame, cuff_p1, cuff_p2, cuff_color, 12)        # White strap
-    cv2.line(frame, cuff_p1, cuff_p2, (40, 40, 40), 2)       # Velcro seam
+    # 2. Wrist Cuff Strap
+    cuff_half = int(28 * SCALE)
+    cuff_p1 = (int(wx + px * cuff_half), int(wy + py * cuff_half))
+    cuff_p2 = (int(wx - px * cuff_half), int(wy - py * cuff_half))
+    cv2.line(frame, cuff_p1, cuff_p2, (15, 15, 15), int(20 * SCALE))
+    cv2.line(frame, cuff_p1, cuff_p2, cuff_color, int(15 * SCALE))
+    cv2.line(frame, cuff_p1, cuff_p2, (50, 50, 50), int(3 * SCALE))
 
-    # 2. Thumb (curved inward toward body: +perp for Left, -perp for Right)
+    # 3. Curved Thumb Dome
     thumb_dir = 1 if is_left else -1
-    tx = int(wx + 14 * math.cos(rad) + thumb_dir * 25 * px)
-    ty = int(wy + 14 * math.sin(rad) + thumb_dir * 25 * py)
-    cv2.ellipse(frame, (tx, ty), (16, 12), deg + thumb_dir * 30, 0, 360, (15, 15, 15), -1)
-    cv2.ellipse(frame, (tx, ty), (14, 10), deg + thumb_dir * 30, 0, 360, shadow_color, -1)
-    cv2.ellipse(frame, (tx, ty), (11, 7), deg + thumb_dir * 30, 0, 360, main_color, -1)
+    tx = int(wx + 18 * SCALE * math.cos(rad) + thumb_dir * 32 * SCALE * px)
+    ty = int(wy + 18 * SCALE * math.sin(rad) + thumb_dir * 32 * SCALE * py)
+    cv2.ellipse(frame, (tx, ty), (int(20 * SCALE), int(15 * SCALE)), deg + thumb_dir * 30, 0, 360, (15, 15, 15), -1)
+    cv2.ellipse(frame, (tx, ty), (int(17 * SCALE), int(12 * SCALE)), deg + thumb_dir * 30, 0, 360, shadow_color, -1)
+    cv2.ellipse(frame, (tx, ty), (int(13 * SCALE), int(9 * SCALE)), deg + thumb_dir * 30, 0, 360, main_color, -1)
 
-    # 3. Main Padded Knuckles (Bulbous curved boxing glove dome)
-    cv2.ellipse(frame, (fx, fy), (38, 30), deg, 0, 360, (15, 15, 15), -1)       # Bold cartoon outline
-    cv2.ellipse(frame, (fx, fy), (35, 27), deg, 0, 360, shadow_color, -1)     # Deep leather shadow
-    # Offset the main body slightly for 3D depth
-    f_inner_x = int(fx - 2 * math.cos(rad))
-    f_inner_y = int(fy - 2 * math.sin(rad))
-    cv2.ellipse(frame, (f_inner_x, f_inner_y), (32, 24), deg, 0, 360, main_color, -1)
+    # 4. Main Knuckle Bulb (Enlarged for arcade impact)
+    k_w = int(52 * SCALE)
+    k_h = int(40 * SCALE)
+    cv2.ellipse(frame, (fx, fy), (k_w + 3, k_h + 3), deg, 0, 360, (15, 15, 15), -1)
+    cv2.ellipse(frame, (fx, fy), (k_w, k_h), deg, 0, 360, shadow_color, -1)
+    
+    # 3D Depth highlight offset
+    f_inner_x = int(fx - 3 * SCALE * math.cos(rad))
+    f_inner_y = int(fy - 3 * SCALE * math.sin(rad))
+    cv2.ellipse(frame, (f_inner_x, f_inner_y), (k_w - 4, k_h - 4), deg, 0, 360, main_color, -1)
 
-    # 4. Glossy 3D Highlight curve on leather
-    hx = int(fx - 12 * math.cos(rad) - 9 * px)
-    hy = int(fy - 12 * math.sin(rad) - 9 * py)
-    cv2.ellipse(frame, (hx, hy), (16, 7), deg - 15, 0, 360, (255, 255, 255), -1)
+    # 5. Glossy Leather Highlights
+    hx = int(fx - 16 * SCALE * math.cos(rad) - 12 * SCALE * px)
+    hy = int(fy - 16 * SCALE * math.sin(rad) - 12 * SCALE * py)
+    cv2.ellipse(frame, (hx, hy), (int(22 * SCALE), int(9 * SCALE)), deg - 15, 0, 360, (255, 255, 255), -1)
 
-    # 5. Glove Brand Stamp ('L' or 'R')
+    # 6. Glove Stamped Label
     lbl = 'L' if is_left else 'R'
-    cv2.putText(frame, lbl, (fx - 9, fy + 7), cv2.FONT_HERSHEY_DUPLEX, 0.65, (255, 255, 255), 2)
+    cv2.putText(frame, lbl, (fx - int(12 * SCALE), fy + int(10 * SCALE)),
+                cv2.FONT_HERSHEY_DUPLEX, 0.85 * SCALE, (255, 255, 255), 2)
 
-# Spawn initial target
-target = spawn_target()
+    # 7. HIGH-VISIBILITY GLOWING PUNCH RETICLE (Indicator ring showing exact punch hit point)
+    reticle_r = int(34 * SCALE)
+    ret_color = (255, 255, 255)
+    cv2.circle(frame, (fx, fy), reticle_r, ret_color, 2)
+    # 4 Crosshair ticks on the ring
+    for angle_offset in (0, 90, 180, 270):
+        c_rad = math.radians(deg + angle_offset)
+        r_inner = reticle_r - int(6 * SCALE)
+        r_outer = reticle_r + int(6 * SCALE)
+        p_in = (int(fx + r_inner * math.cos(c_rad)), int(fy + r_inner * math.sin(c_rad)))
+        p_out = (int(fx + r_outer * math.cos(c_rad)), int(fy + r_outer * math.sin(c_rad)))
+        cv2.line(frame, p_in, p_out, ret_color, 2)
 
-print("\n" + "="*55)
-print("  SHADOW-BOXER ARCADE RUNNING!")
-print("  - Press SPACEBAR to start playing!")
-print("  - Hit Blue targets with LEFT hand, Red with RIGHT hand.")
-print("  - DUCK under the red laser when WARNING appears!")
-print("  - Press 'R' to Restart, 'Q' to Quit.")
-print("="*55 + "\n")
+    return (fx, fy)
 
-prev_time = time.time()
+def draw_sonic_shield(frame, cx, cy, progress):
+    """Draw electric arcade forcefield hex-shield when player claps."""
+    alpha = max(0.0, 1.0 - progress)
+    shield_radius = int((110 + math.sin(time.time() * 16) * 10) * SCALE)
+
+    shock_r = int(shield_radius + progress * 55 * SCALE)
+    cv2.circle(frame, (cx, cy), shock_r, (255, 255, 200), max(1, int(3 * alpha)))
+    cv2.circle(frame, (cx, cy), shield_radius, (255, 240, 0), int(4 * SCALE))
+    cv2.circle(frame, (cx, cy), shield_radius - int(18 * SCALE), (255, 255, 255), int(2 * SCALE))
+    cv2.circle(frame, (cx, cy), max(8, shield_radius - int(38 * SCALE)), (255, 200, 50), int(2 * SCALE))
+
+    for angle_deg in (0, 60, 120, 180, 240, 300):
+        rad = math.radians(angle_deg)
+        x1 = int(cx + (shield_radius - int(38 * SCALE)) * math.cos(rad))
+        y1 = int(cy + (shield_radius - int(38 * SCALE)) * math.sin(rad))
+        x2 = int(cx + shield_radius * math.cos(rad))
+        y2 = int(cy + shield_radius * math.sin(rad))
+        cv2.line(frame, (x1, y1), (x2, y2), (255, 255, 255), int(2 * SCALE))
+
+    cv2.putText(frame, "SONIC SHIELD ACTIVE", (cx - int(135 * SCALE), cy - shield_radius - int(16 * SCALE)),
+                cv2.FONT_HERSHEY_DUPLEX, 0.7 * SCALE, (255, 255, 0), 2)
+
+def draw_powerup_target(frame, pu, current_time):
+    """Draw an animated, pulsing cyberpunk power-up crystal."""
+    x = pu["x"]
+    y = pu["y"]
+    r = pu["radius"]
+    cfg = POWERUP_TYPES.get(pu["type"], POWERUP_TYPES["DOUBLE_DMG"])
+    p_color = cfg["color"]
+
+    # Rotating energy ring
+    rot_speed = current_time * 4.0
+    pulse = int(math.sin(rot_speed * 1.5) * 5 * SCALE)
+    outer_r = r + pulse
+
+    cv2.circle(frame, (x, y), outer_r + int(6 * SCALE), p_color, 2)
+    cv2.circle(frame, (x, y), outer_r, (255, 255, 255), 2)
+    cv2.circle(frame, (x, y), max(6, outer_r - int(10 * SCALE)), p_color, -1)
+
+    # Hex spokes
+    for i in range(4):
+        ang = rot_speed + i * (math.pi / 2)
+        px = int(x + outer_r * math.cos(ang))
+        py = int(y + outer_r * math.sin(ang))
+        cv2.circle(frame, (px, py), int(4 * SCALE), (255, 255, 255), -1)
+
+    # Power-up badge label
+    label = cfg["icon"]
+    cv2.putText(frame, label, (x - int(14 * SCALE), y + int(7 * SCALE)),
+                cv2.FONT_HERSHEY_DUPLEX, 0.65 * SCALE, (10, 10, 10), 2)
+    cv2.putText(frame, cfg["label"], (x - int(40 * SCALE), y + outer_r + int(18 * SCALE)),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.45 * SCALE, p_color, 1)
+
+def draw_mini_boss(frame, boss, current_time):
+    """Draw a towering mechanical mini-boss with rotating spiked shield and glowing health bar."""
+    bx = boss["x"]
+    by = boss["y"]
+    r = boss["radius"]
+    is_hit_flash = (current_time - boss["hit_flash_time"]) < 0.15
+
+    # Flashing damaged or vibrant armored color
+    core_color = (255, 255, 255) if is_hit_flash else (0, 0, 220)
+    armor_color = (220, 220, 220) if is_hit_flash else (0, 165, 255)
+
+    # 1. Spiked rotating energy perimeter
+    num_spikes = 8
+    rot = current_time * 2.5
+    spike_pts = []
+    for i in range(num_spikes * 2):
+        ang = rot + i * (math.pi / num_spikes)
+        dist = (r + int(16 * SCALE)) if (i % 2 == 0) else (r - int(6 * SCALE))
+        sx = int(bx + dist * math.cos(ang))
+        sy = int(by + dist * math.sin(ang))
+        spike_pts.append((sx, sy))
+
+    pts_arr = np.array(spike_pts, np.int32)
+    cv2.polylines(frame, [pts_arr], True, armor_color, int(3 * SCALE))
+
+    # 2. Heavy armored shell
+    cv2.circle(frame, (bx, by), r, (25, 25, 25), -1)
+    cv2.circle(frame, (bx, by), r, armor_color, int(4 * SCALE))
+    cv2.circle(frame, (bx, by), r - int(12 * SCALE), (45, 45, 45), -1)
+
+    # 3. Pulsing Cybernetic Core Eye
+    core_pulse = int(math.sin(current_time * 8.0) * 6 * SCALE)
+    cv2.circle(frame, (bx, by), max(10, int(32 * SCALE) + core_pulse), core_color, -1)
+    cv2.circle(frame, (bx, by), max(5, int(14 * SCALE)), (255, 255, 255), -1)
+
+    # 4. Boss Name Banner
+    cv2.putText(frame, f"[ {boss['name']} ]", (bx - int(75 * SCALE), by - r - int(32 * SCALE)),
+                cv2.FONT_HERSHEY_DUPLEX, 0.65 * SCALE, (0, 215, 255), 2)
+
+    # 5. FLOATING SEGMENTED HEALTH BAR
+    bar_w = int(180 * SCALE)
+    bar_h = int(18 * SCALE)
+    bar_x = bx - bar_w // 2
+    bar_y = by - r - int(24 * SCALE)
+
+    cv2.rectangle(frame, (bar_x - 2, bar_y - 2), (bar_x + bar_w + 2, bar_y + bar_h + 2), (20, 20, 20), -1)
+    cv2.rectangle(frame, (bar_x - 2, bar_y - 2), (bar_x + bar_w + 2, bar_y + bar_h + 2), (200, 200, 200), 1)
+
+    hp_pct = max(0.0, boss["hp"] / boss["max_hp"])
+    fill_w = int(bar_w * hp_pct)
+
+    # Color shifts from Green -> Yellow -> Red as HP drops
+    if hp_pct > 0.5:
+        bar_color = (0, 255, 0)
+    elif hp_pct > 0.25:
+        bar_color = (0, 215, 255)
+    else:
+        bar_color = (0, 0, 255)
+
+    if fill_w > 0:
+        cv2.rectangle(frame, (bar_x, bar_y), (bar_x + fill_w, bar_y + bar_h), bar_color, -1)
+
+    # Segment divider lines
+    for seg in range(1, boss["max_hp"]):
+        seg_x = bar_x + int(bar_w * (seg / boss["max_hp"]))
+        cv2.line(frame, (seg_x, bar_y), (seg_x, bar_y + bar_h), (20, 20, 20), 1)
+
+    # HP text
+    hp_str = f"HP: {boss['hp']}/{boss['max_hp']}"
+    cv2.putText(frame, hp_str, (bx - int(32 * SCALE), bar_y + bar_h - int(4 * SCALE)),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.45 * SCALE, (255, 255, 255), 1)
+
+# -----------------------------------------------------------------------------
+# MAIN GAME LOOP
+# -----------------------------------------------------------------------------
+print("\n" + "="*60)
+print("  SHADOW-BOXER ULTIMATE EDITION RUNNING!")
+print(f"  - Screen Resolution: {SCREEN_WIDTH}x{SCREEN_HEIGHT} (Full-Screen)")
+print("  - SPACEBAR: Start Round  |  P: Pause/Resume  |  F: Toggle Fullscreen")
+print("  - Hit Blue targets with LEFT hand, Red targets with RIGHT hand.")
+print("  - Collect Glowing Orbs for Power-Ups (2x Damage, Slow-Mo, Shield)!")
+print("  - Smash Mini-Bosses before the timer expires!")
+print("  - SHOUT into your mic for 5x KIAI CRITICAL HITS!")
+print("  - R: Restart  |  Q: Quit")
+print("="*60 + "\n")
+
+prev_frame_time = time.time()
 
 while cap.isOpened():
-    success, frame = cap.read()
+    success, raw_cam = cap.read()
     if not success:
         break
 
     # Flip horizontally for intuitive mirror reflection
-    frame = cv2.flip(frame, 1)
+    raw_cam = cv2.flip(raw_cam, 1)
 
-    # Apply Dynamic Screen Shake if active (triggered by Kiai Battle Cry)
-    if screen_shake > 0:
-        dx = random.randint(-8, 8)
-        dy = random.randint(-8, 8)
-        M = np.float32([[1, 0, dx], [0, 1, dy]])
-        frame = cv2.warpAffine(frame, M, (WIDTH, HEIGHT))
-        screen_shake -= 1
+    # Resize camera feed to fill native full-screen resolution seamlessly
+    frame = cv2.resize(raw_cam, (SCREEN_WIDTH, SCREEN_HEIGHT))
 
     current_time = time.time()
+
+    # Dynamic Screen Shake
+    if screen_shake > 0:
+        dx = random.randint(-int(7 * SCALE), int(7 * SCALE))
+        dy = random.randint(-int(7 * SCALE), int(7 * SCALE))
+        M = np.float32([[1, 0, dx], [0, 1, dy]])
+        frame = cv2.warpAffine(frame, M, (SCREEN_WIDTH, SCREEN_HEIGHT))
+        screen_shake -= 1
+
     dt = current_time - last_pose_time if (current_time - last_pose_time) > 0 else 0.033
     last_pose_time = current_time
 
     # FPS Calculation
-    fps = 1.0 / (current_time - prev_time) if (current_time - prev_time) > 0 else 30
-    prev_time = current_time
+    fps = 1.0 / (current_time - prev_frame_time) if (current_time - prev_frame_time) > 0 else 30
+    prev_frame_time = current_time
 
-    # MediaPipe Pose Detection
-    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
+    # -------------------------------------------------------------------------
+    # HIGH-PERFORMANCE CPU POSE TRACKING PIPELINE
+    # Downsample frame specifically for MediaPipe to slash CPU inference latency!
+    # -------------------------------------------------------------------------
+    infer_frame = cv2.resize(raw_cam, (INFER_W, INFER_H))
+    infer_rgb = cv2.cvtColor(infer_frame, cv2.COLOR_BGR2RGB)
+    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=infer_rgb)
     result = detector.detect(mp_image)
 
     wrist_l = None
     wrist_r = None
+    elbow_l = None
+    elbow_r = None
     nose = None
     speed_l = 0.0
     speed_r = 0.0
+    fist_l = None
+    fist_r = None
 
     if result.pose_landmarks and len(result.pose_landmarks) > 0:
         lms = result.pose_landmarks[0]
-        # Nose: 0, Left Elbow: 13, Right Elbow: 14, Left Wrist: 15, Right Wrist: 16
-        nose = (int(lms[0].x * WIDTH), int(lms[0].y * HEIGHT))
-        elbow_l = (int(lms[13].x * WIDTH), int(lms[13].y * HEIGHT))
-        elbow_r = (int(lms[14].x * WIDTH), int(lms[14].y * HEIGHT))
-        wrist_l = (int(lms[15].x * WIDTH), int(lms[15].y * HEIGHT))
-        wrist_r = (int(lms[16].x * WIDTH), int(lms[16].y * HEIGHT))
+        # Landmarks: 0: Nose, 13: Left Elbow, 14: Right Elbow, 15: Left Wrist, 16: Right Wrist
+        raw_nose = (int(lms[0].x * SCREEN_WIDTH), int(lms[0].y * SCREEN_HEIGHT))
+        raw_el = (int(lms[13].x * SCREEN_WIDTH), int(lms[13].y * SCREEN_HEIGHT))
+        raw_er = (int(lms[14].x * SCREEN_WIDTH), int(lms[14].y * SCREEN_HEIGHT))
+        raw_wl = (int(lms[15].x * SCREEN_WIDTH), int(lms[15].y * SCREEN_HEIGHT))
+        raw_wr = (int(lms[16].x * SCREEN_WIDTH), int(lms[16].y * SCREEN_HEIGHT))
 
-        # Calculate punch speed (pixels moved / dt converted to simulated km/h)
-        if prev_wrist_l:
-            dist_l = math.hypot(wrist_l[0] - prev_wrist_l[0], wrist_l[1] - prev_wrist_l[1])
-            speed_l = (dist_l / dt) * 0.05  # simulation scale
-        if prev_wrist_r:
-            dist_r = math.hypot(wrist_r[0] - prev_wrist_r[0], wrist_r[1] - prev_wrist_r[1])
-            speed_r = (dist_r / dt) * 0.05
+        # Exponential Moving Average (EMA) smoothing for silky, jitter-free precision
+        alpha = 0.82
+        if smooth_wrist_l is None:
+            smooth_wrist_l, smooth_wrist_r = raw_wl, raw_wr
+            smooth_elbow_l, smooth_elbow_r = raw_el, raw_er
+            smooth_nose = raw_nose
+        else:
+            smooth_wrist_l = (int(alpha * raw_wl[0] + (1 - alpha) * smooth_wrist_l[0]),
+                              int(alpha * raw_wl[1] + (1 - alpha) * smooth_wrist_l[1]))
+            smooth_wrist_r = (int(alpha * raw_wr[0] + (1 - alpha) * smooth_wrist_r[0]),
+                              int(alpha * raw_wr[1] + (1 - alpha) * smooth_wrist_r[1]))
+            smooth_elbow_l = (int(alpha * raw_el[0] + (1 - alpha) * smooth_elbow_l[0]),
+                              int(alpha * raw_el[1] + (1 - alpha) * smooth_elbow_l[1]))
+            smooth_elbow_r = (int(alpha * raw_er[0] + (1 - alpha) * smooth_elbow_r[0]),
+                              int(alpha * raw_er[1] + (1 - alpha) * smooth_elbow_r[1]))
+            smooth_nose = (int(alpha * raw_nose[0] + (1 - alpha) * smooth_nose[0]),
+                           int(alpha * raw_nose[1] + (1 - alpha) * smooth_nose[1]))
 
-        prev_wrist_l = wrist_l
-        prev_wrist_r = wrist_r
+        wrist_l = smooth_wrist_l
+        wrist_r = smooth_wrist_r
+        elbow_l = smooth_elbow_l
+        elbow_r = smooth_elbow_r
+        nose = smooth_nose
 
-        # Draw realistic arcade boxing gloves on wrists oriented along forearm punch angles!
-        draw_boxing_glove(frame, wrist_l, elbow_l, is_left=True, speed=speed_l)
-        draw_boxing_glove(frame, wrist_r, elbow_r, is_left=False, speed=speed_r)
+        # Velocity tracking (pixels/sec to simulated km/h)
+        if prev_fist_l:
+            dist_l = math.hypot(wrist_l[0] - prev_fist_l[0], wrist_l[1] - prev_fist_l[1])
+            speed_l = (dist_l / dt) * 0.04
+        if prev_fist_r:
+            dist_r = math.hypot(wrist_r[0] - prev_fist_r[0], wrist_r[1] - prev_fist_r[1])
+            speed_r = (dist_r / dt) * 0.04
 
-        # NOTE: The nose dot has been removed so your face remains completely clean!
-        # (The code still tracks head coordinates in the background for laser ducking)
+        is_fury = (active_powerup == "RAPID_FURY" and current_time < powerup_end_time)
+
+        # Draw enlarged arcade boxing gloves + glowing knuckle target reticles
+        fist_l = draw_boxing_glove(frame, wrist_l, elbow_l, is_left=True, speed=speed_l, is_fury=is_fury)
+        fist_r = draw_boxing_glove(frame, wrist_r, elbow_r, is_left=False, speed=speed_r, is_fury=is_fury)
 
         # ---------------------------------------------------------------------
         # MULTIMODAL CLAP DETECTION (Wrists Close + Acoustic Energy Spike)
         # ---------------------------------------------------------------------
         wrist_dist = math.hypot(wrist_l[0] - wrist_r[0], wrist_l[1] - wrist_r[1])
-        # A clap occurs when wrists snap together (< 85px) with acoustic spike
-        is_clap = (wrist_dist < 85 and mic_volume > 0.04) or (wrist_dist < 65)
+        clap_thresh = int(95 * SCALE)
+        is_clap = (wrist_dist < clap_thresh and mic_volume > 0.04) or (wrist_dist < int(75 * SCALE))
 
         if is_clap and (current_time - shield_start_time > 1.6):
             shield_active = True
             shield_start_time = current_time
             shield_center = ((wrist_l[0] + wrist_r[0]) // 2, (wrist_l[1] + wrist_r[1]) // 2)
-            create_explosion(shield_center[0], shield_center[1], (255, 255, 0), is_kiai=True)
+            create_explosion(shield_center[0], shield_center[1], (255, 255, 0), count=32, is_kiai=True)
             play_sfx("shield")
+            trigger_haptic("shield")
 
     # -------------------------------------------------------------------------
-    # GAMEPLAY LOGIC
+    # POWER-UP DURATION & STATUS
+    # -------------------------------------------------------------------------
+    if active_powerup and current_time >= powerup_end_time:
+        active_powerup = None
+        GLOVE_RADIUS = BASE_GLOVE_RADIUS
+
+    if active_powerup == "RAPID_FURY":
+        GLOVE_RADIUS = int(BASE_GLOVE_RADIUS * 1.55)  # Massive hitboxes in fury mode!
+    else:
+        GLOVE_RADIUS = BASE_GLOVE_RADIUS
+
+    # -------------------------------------------------------------------------
+    # GAMEPLAY STATE MACHINE
     # -------------------------------------------------------------------------
     if GAME_STATE == "WAITING":
-        # Overlay translucent start banner
+        # Start Screen Overlay
         overlay = frame.copy()
-        cv2.rectangle(overlay, (30, 60), (WIDTH - 30, 420), (20, 20, 20), -1)
+        card_w = int(680 * SCALE)
+        card_h = int(480 * SCALE)
+        card_x1 = SCREEN_WIDTH // 2 - card_w // 2
+        card_y1 = SCREEN_HEIGHT // 2 - card_h // 2
+        cv2.rectangle(overlay, (card_x1, card_y1), (card_x1 + card_w, card_y1 + card_h), (15, 15, 15), -1)
         cv2.addWeighted(overlay, 0.85, frame, 0.15, 0, frame)
+        cv2.rectangle(frame, (card_x1, card_y1), (card_x1 + card_w, card_y1 + card_h), (0, 215, 255), 2)
 
-        cv2.putText(frame, "SHADOW-BOXER", (WIDTH // 2 - 170, 115),
-                    cv2.FONT_HERSHEY_DUPLEX, 1.1, (0, 255, 255), 2)
-        cv2.putText(frame, "Multimodal Kinetic & Acoustic AR Boxer", (WIDTH // 2 - 190, 150),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
+        title_y = card_y1 + int(60 * SCALE)
+        cv2.putText(frame, "SHADOW-BOXER", (SCREEN_WIDTH // 2 - int(190 * SCALE), title_y),
+                    cv2.FONT_HERSHEY_DUPLEX, 1.25 * SCALE, (0, 255, 255), 2)
+        cv2.putText(frame, "ULTIMATE AR KINETIC ARCADE", (SCREEN_WIDTH // 2 - int(160 * SCALE), title_y + int(32 * SCALE)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.65 * SCALE, (200, 200, 200), 1)
 
-        cv2.putText(frame, "HOW TO PLAY:", (60, 190), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
-        cv2.putText(frame, "- Hit CYAN target with LEFT glove", (60, 220), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 200, 0), 1)
-        cv2.putText(frame, "- Hit RED target with RIGHT glove", (60, 250), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 100, 255), 1)
-        cv2.putText(frame, "- SHOUT / BATTLE CRY on impact for 5x KIAI CRITICAL!", (60, 280), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 215, 255), 1)
-        cv2.putText(frame, "- SQUAT to duck under the Laser Beam!", (60, 310), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
-        cv2.putText(frame, "- OR CLAP HANDS to deploy SONIC SHIELD & parry laser!", (60, 340), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
+        instructions = [
+            "- Hit CYAN targets with LEFT glove, RED with RIGHT glove",
+            "- SHOUT / BATTLE CRY into microphone for 5x KIAI CRITICALS!",
+            "- Collect glowing POWER-UP ORBS (2x Damage, Slow-Mo, Shield)!",
+            "- SQUAT or CLAP to deflect the high-voltage laser hazard!",
+            "- Smash MINI-BOSSES to score massive bounty points!",
+            "- Controls: [SPACE] Start  |  [P] Pause  |  [F] Fullscreen  |  [Q] Quit"
+        ]
 
-        cv2.putText(frame, "PRESS [SPACE] TO START", (WIDTH // 2 - 150, 395),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+        text_y = title_y + int(80 * SCALE)
+        for line in instructions:
+            cv2.putText(frame, line, (card_x1 + int(35 * SCALE), text_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.52 * SCALE, (230, 230, 230), 1)
+            text_y += int(36 * SCALE)
+
+        cv2.putText(frame, "PRESS [SPACE] TO FIGHT!", (SCREEN_WIDTH // 2 - int(165 * SCALE), card_y1 + card_h - int(30 * SCALE)),
+                    cv2.FONT_HERSHEY_DUPLEX, 0.85 * SCALE, (0, 255, 100), 2)
+
+    elif GAME_STATE == "PAUSED":
+        # Pause Overlay
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (0, 0), (SCREEN_WIDTH, SCREEN_HEIGHT), (10, 10, 10), -1)
+        cv2.addWeighted(overlay, 0.70, frame, 0.30, 0, frame)
+
+        cv2.putText(frame, "GAME PAUSED", (SCREEN_WIDTH // 2 - int(160 * SCALE), SCREEN_HEIGHT // 2 - int(20 * SCALE)),
+                    cv2.FONT_HERSHEY_DUPLEX, 1.4 * SCALE, (0, 215, 255), 3)
+        cv2.putText(frame, "Press 'P' to Resume  |  'Q' to Quit", (SCREEN_WIDTH // 2 - int(180 * SCALE), SCREEN_HEIGHT // 2 + int(45 * SCALE)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.75 * SCALE, (255, 255, 255), 2)
 
     elif GAME_STATE == "PLAYING":
-        elapsed = current_time - round_start_time
+        elapsed = current_time - round_start_time - total_paused_duration
         time_left = max(0, int(GAME_DURATION - elapsed))
 
         if time_left <= 0:
             GAME_STATE = "GAMEOVER"
 
-        # Check if Sonic Shield is actively deployed
-        is_shield_up = (current_time - shield_start_time) < shield_duration
-        if is_shield_up:
-            progress = (current_time - shield_start_time) / shield_duration
-            draw_sonic_shield(frame, shield_center[0], shield_center[1], progress)
+        # Check Active Sonic Shield
+        is_shield_up = (current_time - shield_start_time) < shield_duration or (active_powerup == "SHIELD" and current_time < powerup_end_time)
+        if is_shield_up and (current_time - shield_start_time) < shield_duration:
+            prog = (current_time - shield_start_time) / shield_duration
+            draw_sonic_shield(frame, shield_center[0], shield_center[1], prog)
 
-        # 1. Update Laser Hazard (Every 10-14 seconds)
-        if not laser_active and current_time >= next_laser_time:
+        # ---------------------------------------------------------------------
+        # MINI-BOSS WAVE SPAWN LOGIC
+        # ---------------------------------------------------------------------
+        for wave_idx, trigger_sec in enumerate(BOSS_WAVE_TIMERS, start=1):
+            if time_left <= trigger_sec and wave_idx not in boss_waves_spawned and not boss_active:
+                boss_waves_spawned.add(wave_idx)
+                boss_active = True
+                boss_data = spawn_mini_boss(wave_idx)
+                screen_shake = 12
+
+        # Update & Draw Mini-Boss if Active
+        if boss_active and boss_data:
+            # Smooth bobbing movement
+            bob_speed = 2.2
+            boss_data["x"] = int(boss_data["base_x"] + math.sin(current_time * bob_speed) * (140 * SCALE))
+            boss_data["y"] = int(boss_data["base_y"] + math.cos(current_time * (bob_speed * 1.3)) * (45 * SCALE))
+
+            draw_mini_boss(frame, boss_data, current_time)
+
+            # Check Boss Collision with both fists
+            bx, by, br = boss_data["x"], boss_data["y"], boss_data["radius"]
+            boss_hit = False
+            boss_speed = 0.0
+
+            # Forgiving collision check with swept fists
+            if fist_l and prev_fist_l:
+                d_l = dist_point_to_segment(prev_fist_l, fist_l, (bx, by))
+                if d_l < (br + GLOVE_RADIUS):
+                    boss_hit = True
+                    boss_speed = speed_l
+
+            if not boss_hit and fist_r and prev_fist_r:
+                d_r = dist_point_to_segment(prev_fist_r, fist_r, (bx, by))
+                if d_r < (br + GLOVE_RADIUS):
+                    boss_hit = True
+                    boss_speed = speed_r
+
+            if boss_hit and (current_time - boss_data["hit_flash_time"] > 0.22):
+                boss_data["hit_flash_time"] = current_time
+                is_kiai = (current_time - kiai_trigger_time) < 0.65
+
+                # Damage Calculation
+                dmg = 1
+                if active_powerup == "DOUBLE_DMG" and current_time < powerup_end_time:
+                    dmg *= 2
+                if is_kiai:
+                    dmg *= 3
+
+                boss_data["hp"] = max(0, boss_data["hp"] - dmg)
+                total_punches += 1
+                combo += 1
+                if combo > max_combo:
+                    max_combo = combo
+
+                play_sfx("boss_hit")
+                trigger_haptic("boss")
+
+                if is_kiai:
+                    kiai_strikes += 1
+                    screen_shake = 16
+                    create_explosion(bx, by, (0, 215, 255), count=38, is_kiai=True)
+                    last_hit_text = f"CRITICAL BOSS STRIKE! -{dmg} HP"
+                else:
+                    screen_shake = 7
+                    create_explosion(bx, by, (0, 165, 255), count=18)
+                    last_hit_text = f"BOSS HIT! -{dmg} HP"
+
+                last_hit_time = current_time
+
+                # Check Boss Defeat
+                if boss_data["hp"] <= 0:
+                    boss_active = False
+                    bosses_defeated += 1
+                    screen_shake = 22
+                    create_explosion(bx, by, (0, 215, 255), count=85, is_kiai=True)
+                    play_sfx("boss_defeat")
+                    boss_bonus = 600 * max(1, combo)
+                    score += boss_bonus
+                    last_hit_text = f"MINI-BOSS DESTROYED! +{boss_bonus} PTS!"
+                    last_hit_time = current_time
+                    target = spawn_target()
+
+        # ---------------------------------------------------------------------
+        # POWER-UP ORB SPAWN & COLLECTION
+        # ---------------------------------------------------------------------
+        if not active_powerup and powerup_target is None and not boss_active:
+            if current_time >= next_powerup_spawn_time:
+                powerup_target = spawn_powerup_target()
+                next_powerup_spawn_time = current_time + random.uniform(14, 20)
+
+        if powerup_target:
+            # Check expiration
+            if current_time - powerup_target["spawn_time"] > powerup_target["duration"]:
+                powerup_target = None
+            else:
+                draw_powerup_target(frame, powerup_target, current_time)
+                pux, puy, pur = powerup_target["x"], powerup_target["y"], powerup_target["radius"]
+
+                # Collision check with either hand
+                pu_hit = False
+                if fist_l and dist_point_to_segment(prev_fist_l, fist_l, (pux, puy)) < (pur + GLOVE_RADIUS):
+                    pu_hit = True
+                if not pu_hit and fist_r and dist_point_to_segment(prev_fist_r, fist_r, (pux, puy)) < (pur + GLOVE_RADIUS):
+                    pu_hit = True
+
+                if pu_hit:
+                    active_powerup = powerup_target["type"]
+                    cfg = POWERUP_TYPES[active_powerup]
+                    powerup_end_time = current_time + cfg["duration"]
+                    powerups_collected += 1
+                    create_explosion(pux, puy, cfg["color"], count=32, is_kiai=True)
+                    play_sfx("powerup")
+                    trigger_haptic("powerup")
+                    last_hit_text = f"POWER-UP ACTIVATED: {cfg['name']}!"
+                    last_hit_time = current_time
+                    powerup_target = None
+
+        # ---------------------------------------------------------------------
+        # LASER HAZARD (Squat / Duck or Parrying Shield)
+        # ---------------------------------------------------------------------
+        if not laser_active and current_time >= next_laser_time and not boss_active:
             laser_active = True
             laser_start_time = current_time
             laser_dodged = False
@@ -390,37 +865,36 @@ while cap.isOpened():
 
         if laser_active:
             laser_elapsed = current_time - laser_start_time
-            laser_y = 210  # Player must duck nose below Y=210
+            laser_speed_mod = 0.6 if (active_powerup == "SLOW_MO" and current_time < powerup_end_time) else 1.0
+            eff_duration = laser_duration / laser_speed_mod
 
-            # Flashing warning or deadly laser beam
+            laser_y = int(SCREEN_HEIGHT * 0.38)
             laser_color = (0, 0, 255) if int(current_time * 8) % 2 == 0 else (0, 255, 255)
-            cv2.line(frame, (0, laser_y), (WIDTH, laser_y), laser_color, 4)
-            cv2.putText(frame, "! DUCK OR CLAP SHIELD !", (WIDTH // 2 - 155, laser_y - 12),
-                        cv2.FONT_HERSHEY_DUPLEX, 0.7, laser_color, 2)
+            cv2.line(frame, (0, laser_y), (SCREEN_WIDTH, laser_y), laser_color, int(4 * SCALE))
+            cv2.putText(frame, "! DUCK OR CLAP SHIELD !", (SCREEN_WIDTH // 2 - int(190 * SCALE), laser_y - int(16 * SCALE)),
+                        cv2.FONT_HERSHEY_DUPLEX, 0.75 * SCALE, laser_color, 2)
 
-            # Check if player ducked
             if nose and nose[1] > laser_y:
                 laser_dodged = True
-                cv2.putText(frame, "NICE DODGE!", (WIDTH // 2 - 60, laser_y + 35),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                cv2.putText(frame, "NICE DODGE!", (SCREEN_WIDTH // 2 - int(75 * SCALE), laser_y + int(40 * SCALE)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.75 * SCALE, (0, 255, 0), 2)
 
-            # Check if player deflected with Sonic Shield!
             if is_shield_up:
                 laser_deflected = True
                 laser_dodged = True
-                cv2.putText(frame, "ELECTRIC SHIELD DEFLECTING LASER!", (WIDTH // 2 - 170, laser_y + 35),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 0), 2)
+                cv2.putText(frame, "SHIELD DEFLECTING LASER!", (SCREEN_WIDTH // 2 - int(180 * SCALE), laser_y + int(40 * SCALE)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.72 * SCALE, (255, 255, 0), 2)
 
-            if laser_elapsed >= laser_duration:
+            if laser_elapsed >= eff_duration:
                 laser_active = False
                 next_laser_time = current_time + random.uniform(10, 16)
                 if laser_deflected:
-                    score += 75  # Bonus reward for high-skill clap parry!
+                    score += 75
                     shields_deflected += 1
                     last_hit_text = "ELECTRIC SHIELD DEFLECTION! +75"
                     last_hit_time = current_time
                     screen_shake = 7
-                    create_explosion(WIDTH // 2, laser_y, (255, 255, 0), is_kiai=True)
+                    create_explosion(SCREEN_WIDTH // 2, laser_y, (255, 255, 0), count=28, is_kiai=True)
                     play_sfx("shield")
                 elif laser_dodged:
                     score += 50
@@ -433,182 +907,262 @@ while cap.isOpened():
                     last_hit_text = "LASER HIT! -30"
                     last_hit_time = current_time
 
-        # 2. Draw & Check Target Punch
-        if target:
-            # Pulsing radius animation
-            pulse = int(math.sin(current_time * 6) * 4)
+        # ---------------------------------------------------------------------
+        # REGULAR TARGET DRAW & SWEPT COLLISION CHECK
+        # ---------------------------------------------------------------------
+        if target and not boss_active:
+            pulse = int(math.sin(current_time * 6) * 4 * SCALE)
             r = target["radius"] + pulse
             t_color = (255, 200, 0) if target["hand"] == "LEFT" else (0, 80, 255)
             label = "L" if target["hand"] == "LEFT" else "R"
 
-            # Draw target pad
-            cv2.circle(frame, (target["x"], target["y"]), r, t_color, 3)
-            cv2.circle(frame, (target["x"], target["y"]), max(4, r - 12), t_color, -1)
-            cv2.putText(frame, label, (target["x"] - 9, target["y"] + 8),
-                        cv2.FONT_HERSHEY_DUPLEX, 0.7, (0, 0, 0), 2)
+            # Draw Arcade Target Pad
+            cv2.circle(frame, (target["x"], target["y"]), r, t_color, int(4 * SCALE))
+            cv2.circle(frame, (target["x"], target["y"]), max(4, r - int(14 * SCALE)), t_color, -1)
+            cv2.putText(frame, label, (target["x"] - int(10 * SCALE), target["y"] + int(10 * SCALE)),
+                        cv2.FONT_HERSHEY_DUPLEX, 0.85 * SCALE, (0, 0, 0), 2)
 
-            # Collision Check
+            # Continuous Swept Collision Detection (Prevents tunneling through targets!)
             hit = False
             hit_speed = 0.0
+            tgt_center = (target["x"], target["y"])
 
-            if target["hand"] == "LEFT" and wrist_l:
-                d = math.hypot(wrist_l[0] - target["x"], wrist_l[1] - target["y"])
-                if d < (r + GLOVE_RADIUS - 5):
+            # Left Hand Check
+            if target["hand"] == "LEFT" and fist_l:
+                d_swept = dist_point_to_segment(prev_fist_l, fist_l, tgt_center)
+                if d_swept < (r + GLOVE_RADIUS + 15):
                     hit = True
                     hit_speed = speed_l
-            elif target["hand"] == "RIGHT" and wrist_r:
-                d = math.hypot(wrist_r[0] - target["x"], wrist_r[1] - target["y"])
-                if d < (r + GLOVE_RADIUS - 5):
+
+            # Right Hand Check
+            elif target["hand"] == "RIGHT" and fist_r:
+                d_swept = dist_point_to_segment(prev_fist_r, fist_r, tgt_center)
+                if d_swept < (r + GLOVE_RADIUS + 15):
                     hit = True
                     hit_speed = speed_r
 
+            # Forgiving Cross/Fury Hand Check: In Rapid Fury mode, either hand hits!
+            if not hit and active_powerup == "RAPID_FURY":
+                for f_pt, p_pt, spd in [(fist_l, prev_fist_l, speed_l), (fist_r, prev_fist_r, speed_r)]:
+                    if f_pt and dist_point_to_segment(p_pt, f_pt, tgt_center) < (r + GLOVE_RADIUS + 25):
+                        hit = True
+                        hit_speed = spd
+                        break
+
             if hit:
-                # Check if Kiai Battle Cry was shouted within the last 0.6 seconds!
-                is_kiai = (current_time - kiai_trigger_time) < 0.6
+                is_kiai = (current_time - kiai_trigger_time) < 0.65
 
                 if is_kiai:
                     kiai_strikes += 1
-                    screen_shake = 10  # Violently shake screen on Kiai impact!
-                    create_explosion(target["x"], target["y"], t_color, is_kiai=True)
+                    screen_shake = 10
+                    create_explosion(target["x"], target["y"], t_color, count=36, is_kiai=True)
                     play_sfx("kiai")
+                    trigger_haptic("kiai")
                 else:
-                    create_explosion(target["x"], target["y"], t_color, is_kiai=False)
+                    create_explosion(target["x"], target["y"], t_color, count=16)
                     play_sfx("punch")
                     play_sfx("combo", combo)
+                    trigger_haptic("punch")
 
                 total_punches += 1
                 combo += 1
                 if combo > max_combo:
                     max_combo = combo
 
-                # Simulated speed in km/h
-                kmh = min(45.0, max(12.0, hit_speed * 1.8 + random.uniform(2, 6)))
+                kmh = min(48.0, max(14.0, hit_speed * 1.8 + random.uniform(2, 6)))
                 if kmh > max_punch_speed:
                     max_punch_speed = kmh
 
-                if is_kiai:
-                    points = 50 * combo  # 5x massive score bonus for Kiai!
-                    score += points
-                    last_hit_text = f"FIRE KIAI CRITICAL! +{points} ({kmh:.1f} km/h)"
-                else:
-                    points = 10 * combo
-                    score += points
-                    last_hit_text = f"+{points} PUNCH! ({kmh:.1f} km/h)"
+                # Score multipliers
+                pts = (50 if is_kiai else 10) * combo
+                if active_powerup == "SCORE_BOOST" and current_time < powerup_end_time:
+                    pts *= 3
+                if active_powerup == "DOUBLE_DMG" and current_time < powerup_end_time:
+                    pts *= 2
 
+                score += pts
+                tag = "FIRE KIAI CRITICAL!" if is_kiai else "CLEAN HIT!"
+                last_hit_text = f"{tag} +{pts} ({kmh:.1f} km/h)"
                 last_hit_time = current_time
 
-                # Spawn next target immediately
+                # Immediate respawn
                 target = spawn_target()
 
-        # Draw flying particle sparks
+        # Update flying particle system
         update_and_draw_particles(frame)
 
-        # 3. HUD (Heads Up Display)
-        # Top Header Bar
-        cv2.rectangle(frame, (0, 0), (WIDTH, 48), (20, 20, 20), -1)
-        cv2.putText(frame, f"SCORE: {score}", (15, 32), cv2.FONT_HERSHEY_DUPLEX, 0.7, (0, 255, 255), 2)
-        cv2.putText(frame, f"TIME: {time_left}s", (WIDTH // 2 - 50, 32), cv2.FONT_HERSHEY_DUPLEX, 0.7, (255, 255, 255), 2)
-        combo_color = (0, 255, 0) if combo < 5 else (0, 165, 255)
-        cv2.putText(frame, f"COMBO: x{combo}", (WIDTH - 160, 32), cv2.FONT_HERSHEY_DUPLEX, 0.7, combo_color, 2)
+        # ---------------------------------------------------------------------
+        # HEADS UP DISPLAY (HUD)
+        # ---------------------------------------------------------------------
+        header_h = int(54 * SCALE)
+        cv2.rectangle(frame, (0, 0), (SCREEN_WIDTH, header_h), (20, 20, 20), -1)
+        cv2.putText(frame, f"SCORE: {score}", (int(20 * SCALE), int(36 * SCALE)),
+                    cv2.FONT_HERSHEY_DUPLEX, 0.8 * SCALE, (0, 255, 255), 2)
+        cv2.putText(frame, f"TIME: {time_left}s", (SCREEN_WIDTH // 2 - int(55 * SCALE), int(36 * SCALE)),
+                    cv2.FONT_HERSHEY_DUPLEX, 0.8 * SCALE, (255, 255, 255), 2)
+        combo_c = (0, 255, 0) if combo < 5 else ((0, 165, 255) if combo < 12 else (0, 0, 255))
+        cv2.putText(frame, f"COMBO: x{combo}", (SCREEN_WIDTH - int(190 * SCALE), int(36 * SCALE)),
+                    cv2.FONT_HERSHEY_DUPLEX, 0.8 * SCALE, combo_c, 2)
 
-        # Real-Time Microphone Acoustic / Kiai HUD Pill (Bottom Left)
-        is_kiai_ready = (current_time - kiai_trigger_time) < 0.6
-        mic_bar_w = int(min(1.0, mic_volume / (KIAI_THRESHOLD * 1.5)) * 110)
+        # ACTIVE POWER-UP HUD BADGE (Top Center/Right)
+        if active_powerup and current_time < powerup_end_time:
+            cfg = POWERUP_TYPES[active_powerup]
+            rem = powerup_end_time - current_time
+            pct = rem / cfg["duration"]
+            badge_w = int(220 * SCALE)
+            badge_h = int(32 * SCALE)
+            bx = SCREEN_WIDTH // 2 - badge_w // 2
+            by = header_h + int(10 * SCALE)
 
-        cv2.rectangle(frame, (10, HEIGHT - 55), (185, HEIGHT - 22), (25, 25, 25), -1)
+            cv2.rectangle(frame, (bx, by), (bx + badge_w, by + badge_h), (25, 25, 25), -1)
+            cv2.rectangle(frame, (bx, by), (bx + badge_w, by + badge_h), cfg["color"], 2)
+            cv2.rectangle(frame, (bx + 2, by + 2), (bx + int(badge_w * pct), by + badge_h - 2), cfg["color"], -1)
+            cv2.putText(frame, f"{cfg['name']} ({rem:.1f}s)", (bx + int(10 * SCALE), by + int(21 * SCALE)),
+                        cv2.FONT_HERSHEY_DUPLEX, 0.48 * SCALE, (255, 255, 255), 1)
+
+        # Real-Time Microphone Energy / Kiai Pill (Bottom Left)
+        is_kiai_ready = (current_time - kiai_trigger_time) < 0.65
+        mic_bar_w = int(min(1.0, mic_volume / (KIAI_THRESHOLD * 1.5)) * int(120 * SCALE))
+        pill_y = SCREEN_HEIGHT - int(65 * SCALE)
+
+        cv2.rectangle(frame, (int(15 * SCALE), pill_y), (int(210 * SCALE), pill_y + int(36 * SCALE)), (25, 25, 25), -1)
         if is_kiai_ready:
-            # Flashing Gold/Red Kiai Ready indicator!
-            cv2.rectangle(frame, (10, HEIGHT - 55), (185, HEIGHT - 22), (0, 165, 255), 2)
-            cv2.putText(frame, "KIAI READY!", (22, HEIGHT - 33),
-                        cv2.FONT_HERSHEY_DUPLEX, 0.48, (0, 215, 255), 1)
+            cv2.rectangle(frame, (int(15 * SCALE), pill_y), (int(210 * SCALE), pill_y + int(36 * SCALE)), (0, 165, 255), 2)
+            cv2.putText(frame, "KIAI READY!", (int(28 * SCALE), pill_y + int(24 * SCALE)),
+                        cv2.FONT_HERSHEY_DUPLEX, 0.55 * SCALE, (0, 215, 255), 1)
         else:
-            # Live volume energy bar
-            cv2.rectangle(frame, (18, HEIGHT - 33), (18 + mic_bar_w, HEIGHT - 27), (0, 255, 100), -1)
-            cv2.putText(frame, "VOICE / KIAI", (18, HEIGHT - 38),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.38, (180, 180, 180), 1)
+            cv2.rectangle(frame, (int(25 * SCALE), pill_y + int(22 * SCALE)),
+                          (int(25 * SCALE) + mic_bar_w, pill_y + int(28 * SCALE)), (0, 255, 100), -1)
+            cv2.putText(frame, "VOICE / KIAI", (int(25 * SCALE), pill_y + int(16 * SCALE)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.42 * SCALE, (180, 180, 180), 1)
 
         # Floating Hit Impact Toast
         if current_time - last_hit_time < 1.2:
-            toast_color = (0, 215, 255) if "KIAI" in last_hit_text else (0, 255, 255)
-            cv2.putText(frame, last_hit_text, (WIDTH // 2 - 140, 90),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, toast_color, 2)
+            t_col = (0, 215, 255) if "KIAI" in last_hit_text or "BOSS" in last_hit_text else (0, 255, 255)
+            cv2.putText(frame, last_hit_text, (SCREEN_WIDTH // 2 - int(170 * SCALE), header_h + int(60 * SCALE)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.75 * SCALE, t_col, 2)
 
     elif GAME_STATE == "GAMEOVER":
-        # Post-game summary card
+        # Post-Game Summary Card
         overlay = frame.copy()
-        cv2.rectangle(overlay, (45, 50), (WIDTH - 45, 430), (15, 15, 15), -1)
+        card_w = int(620 * SCALE)
+        card_h = int(490 * SCALE)
+        cx1 = SCREEN_WIDTH // 2 - card_w // 2
+        cy1 = SCREEN_HEIGHT // 2 - card_h // 2
+        cv2.rectangle(overlay, (cx1, cy1), (cx1 + card_w, cy1 + card_h), (15, 15, 15), -1)
         cv2.addWeighted(overlay, 0.88, frame, 0.12, 0, frame)
+        cv2.rectangle(frame, (cx1, cy1), (cx1 + card_w, cy1 + card_h), (0, 215, 255), 2)
 
-        cv2.putText(frame, "ROUND FINISHED!", (WIDTH // 2 - 150, 95),
-                    cv2.FONT_HERSHEY_DUPLEX, 0.95, (0, 255, 255), 2)
+        cv2.putText(frame, "ROUND FINISHED!", (SCREEN_WIDTH // 2 - int(160 * SCALE), cy1 + int(50 * SCALE)),
+                    cv2.FONT_HERSHEY_DUPLEX, 1.1 * SCALE, (0, 255, 255), 2)
 
-        # Workout & Kinetic Metrics
-        cal_burned = total_punches * 0.18 + dodges_completed * 0.5 + kiai_strikes * 0.35 + shields_deflected * 0.6
+        cal_burned = total_punches * 0.18 + dodges_completed * 0.5 + kiai_strikes * 0.35 + shields_deflected * 0.6 + bosses_defeated * 1.5
         stats = [
             f"FINAL SCORE: {score}",
             f"PUNCHES LANDED: {total_punches}",
+            f"MINI-BOSSES DEFEATED: {bosses_defeated}",
+            f"POWER-UPS COLLECTED: {powerups_collected}",
             f"KIAI POWER STRIKES: {kiai_strikes} (5x BOOST!)",
             f"LASERS DEFLECTED: {shields_deflected} (CLAP PARRY!)",
-            f"MAX COMBO: x{max_combo}",
+            f"MAX COMBO STREAK: x{max_combo}",
             f"TOP PUNCH SPEED: {max_punch_speed:.1f} km/h",
-            f"LASER DODGES: {dodges_completed}",
             f"EST. CALORIES BURNED: {cal_burned:.1f} kcal",
         ]
 
-        y_offset = 135
+        stat_y = cy1 + int(95 * SCALE)
         for s in stats:
-            if "KIAI" in s:
-                stat_color = (0, 215, 255)
+            if "SCORE" in s:
+                scol = (0, 255, 255)
+            elif "BOSS" in s:
+                scol = (0, 165, 255)
+            elif "KIAI" in s:
+                scol = (0, 215, 255)
             elif "DEFLECTED" in s:
-                stat_color = (255, 255, 0)
+                scol = (255, 255, 0)
             else:
-                stat_color = (230, 230, 230)
-            cv2.putText(frame, s, (75, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.60, stat_color, 2)
-            y_offset += 33
+                scol = (230, 230, 230)
+            cv2.putText(frame, s, (cx1 + int(45 * SCALE), stat_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.60 * SCALE, scol, 2)
+            stat_y += int(36 * SCALE)
 
-        cv2.putText(frame, "Press 'R' to Play Again  |  'Q' to Quit", (WIDTH // 2 - 180, 415),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+        cv2.putText(frame, "Press 'R' to Play Again  |  'Q' to Quit", (SCREEN_WIDTH // 2 - int(200 * SCALE), cy1 + card_h - int(25 * SCALE)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.65 * SCALE, (0, 255, 0), 2)
 
-    # Global footer: FPS & Controls
-    cv2.putText(frame, f"FPS: {int(fps)} (CPU)", (10, HEIGHT - 8),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (100, 255, 100), 1)
+    # Store previous fist positions for swept continuous collision detection
+    prev_fist_l = fist_l
+    prev_fist_r = fist_r
 
-    cv2.imshow("SHADOW-BOXER: Kinetic AR Punching Game", frame)
+    # Footer: FPS & System Status
+    cv2.putText(frame, f"FPS: {int(fps)} | RES: {SCREEN_WIDTH}x{SCREEN_HEIGHT}", (int(15 * SCALE), SCREEN_HEIGHT - int(12 * SCALE)),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.45 * SCALE, (120, 255, 120), 1)
+
+    cv2.imshow(WINDOW_NAME, frame)
 
     key = cv2.waitKey(1) & 0xFF
     if key == ord('q'):
         break
+    elif key == ord('f'):  # Toggle Fullscreen
+        is_fullscreen = not is_fullscreen
+        if is_fullscreen:
+            cv2.setWindowProperty(WINDOW_NAME, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+        else:
+            cv2.setWindowProperty(WINDOW_NAME, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
+    elif key == ord('p'):  # Pause / Resume Toggle
+        if GAME_STATE == "PLAYING":
+            GAME_STATE = "PAUSED"
+            pause_start_time = time.time()
+        elif GAME_STATE == "PAUSED":
+            GAME_STATE = "PLAYING"
+            total_paused_duration += (time.time() - pause_start_time)
     elif key == 32:  # SPACEBAR to start
         if GAME_STATE == "WAITING":
             GAME_STATE = "PLAYING"
             round_start_time = time.time()
+            total_paused_duration = 0.0
             score = 0
             combo = 0
+            max_combo = 0
             total_punches = 0
             kiai_strikes = 0
+            bosses_defeated = 0
+            powerups_collected = 0
             shields_deflected = 0
             laser_deflected = False
             shield_start_time = 0.0
             max_punch_speed = 0.0
             dodges_completed = 0
+            boss_active = False
+            boss_data = None
+            boss_waves_spawned.clear()
+            active_powerup = None
+            powerup_target = None
             play_sfx("start")
     elif key == ord('r'):  # Restart
         GAME_STATE = "PLAYING"
         round_start_time = time.time()
+        total_paused_duration = 0.0
         score = 0
         combo = 0
+        max_combo = 0
         total_punches = 0
         kiai_strikes = 0
+        bosses_defeated = 0
+        powerups_collected = 0
         shields_deflected = 0
         laser_deflected = False
         shield_start_time = 0.0
         max_punch_speed = 0.0
         dodges_completed = 0
+        boss_active = False
+        boss_data = None
+        boss_waves_spawned.clear()
+        active_powerup = None
+        powerup_target = None
         play_sfx("start")
     elif key == ord('s'):  # Manual debug shortcut for Sonic Shield
         if GAME_STATE == "PLAYING":
             shield_start_time = current_time
-            create_explosion(WIDTH // 2, HEIGHT // 2, (255, 255, 0), is_kiai=True)
+            create_explosion(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2, (255, 255, 0), count=32, is_kiai=True)
             play_sfx("shield")
 
 cap.release()
