@@ -3,6 +3,7 @@ import time
 import math
 import random
 import os
+import json
 import numpy as np
 import sounddevice as sd
 import mediapipe as mp
@@ -69,7 +70,7 @@ INFER_H = 288
 # GAME STATE & VARIABLES
 # -----------------------------------------------------------------------------
 GAME_STATE = "WAITING"   # "WAITING", "PLAYING", "PAUSED", "GAMEOVER"
-GAME_DURATION = 60       # 60 seconds round
+GAME_DURATION = 90       # 90 seconds round
 round_start_time = 0.0
 pause_start_time = 0.0
 total_paused_duration = 0.0
@@ -78,7 +79,6 @@ score = 0
 combo = 0
 max_combo = 0
 total_punches = 0
-max_punch_speed = 0.0
 dodges_completed = 0
 kiai_strikes = 0
 bosses_defeated = 0
@@ -88,27 +88,76 @@ last_hit_time = 0.0
 screen_shake = 0
 
 # -----------------------------------------------------------------------------
-# MULTIMODAL AUDIO DSP (Kiai / Battle Cry Detection)
+# KIAI ENERGY METER (Punch-Charged Shout Mode)
+# -----------------------------------------------------------------------------
+KIAI_MAX = 100
+kiai_energy = 0
+KIAI_ENERGY_PER_HIT = 8       # Energy gained per successful target hit
+KIAI_ENERGY_BOSS_HIT = 15     # Extra energy per mini-boss hit
+KIAI_MODE_DURATION = 10.0     # Kiai bonus mode lasts 10 seconds
+SHOUT_THRESHOLD = 0.08        # Mic RMS threshold for detecting a shout
+kiai_mode = False
+kiai_mode_end = 0.0
+kiai_mode_activated_time = 0.0  # For activation flash display
+
+# -----------------------------------------------------------------------------
+# PERSISTENT HIGH SCORE SYSTEM
+# -----------------------------------------------------------------------------
+HIGH_SCORE_FILE = os.path.join(os.path.dirname(__file__), "high_score.json")
+HIGH_SCORE_VERSION = 2  # Increment to force migration of inflated old scores
+high_score = 0
+prev_high_score = 0
+is_new_high_score = False
+
+def load_high_score():
+    """Load persisted high score, migrating/resetting old inflated scores."""
+    global high_score, prev_high_score
+    try:
+        with open(HIGH_SCORE_FILE, 'r') as f:
+            data = json.load(f)
+        if data.get("version", 0) >= HIGH_SCORE_VERSION:
+            high_score = data.get("high_score", 0)
+            prev_high_score = high_score
+        else:
+            # Old inflated score detected - reset for new balanced scoring
+            high_score = 0
+            prev_high_score = 0
+            save_high_score(0)
+    except (FileNotFoundError, json.JSONDecodeError, KeyError):
+        high_score = 0
+        prev_high_score = 0
+
+def save_high_score(new_score):
+    """Persist high score to disk with version tag."""
+    global high_score
+    high_score = new_score
+    try:
+        with open(HIGH_SCORE_FILE, 'w') as f:
+            json.dump({"high_score": new_score, "version": HIGH_SCORE_VERSION}, f)
+    except Exception:
+        pass
+
+# Load high score on startup
+load_high_score()
+
+# -----------------------------------------------------------------------------
+# MULTIMODAL AUDIO DSP (Microphone Volume Tracking)
 # -----------------------------------------------------------------------------
 AUDIO_AVAILABLE = False
 mic_volume = 0.0
-KIAI_THRESHOLD = 0.075    # RMS threshold for shouting/yelling into microphone
-kiai_active = False
-kiai_trigger_time = 0.0
+KIAI_THRESHOLD = 0.075    # RMS threshold for shout detection display
 
 def audio_callback(indata, frames, time_info, status):
-    global mic_volume, kiai_active, kiai_trigger_time
+    """Track microphone volume for shout detection during Kiai mode."""
+    global mic_volume
     rms = float(np.sqrt(np.mean(indata**2)))
     mic_volume = mic_volume * 0.65 + rms * 0.35
-    if mic_volume > KIAI_THRESHOLD:
-        kiai_active = True
-        kiai_trigger_time = time.time()
 
 try:
     audio_stream = sd.InputStream(channels=1, samplerate=16000, callback=audio_callback, blocksize=512)
     audio_stream.start()
     AUDIO_AVAILABLE = True
-    print("[Audio DSP] Microphone initialized! Kiai Battle Cry is ACTIVE.")
+    print("[Audio DSP] Microphone initialized! Kiai Shout Mode is ACTIVE.")
 except Exception as e:
     print(f"[Audio DSP Warning] Could not open microphone: {e}. Falling back to Vision only.")
 
@@ -721,50 +770,106 @@ while cap.isOpened():
     # GAMEPLAY STATE MACHINE
     # -------------------------------------------------------------------------
     if GAME_STATE == "WAITING":
-        # Start Screen Overlay
-        overlay = frame.copy()
-        card_w = int(680 * SCALE)
-        card_h = int(480 * SCALE)
-        card_x1 = SCREEN_WIDTH // 2 - card_w // 2
-        card_y1 = SCREEN_HEIGHT // 2 - card_h // 2
-        cv2.rectangle(overlay, (card_x1, card_y1), (card_x1 + card_w, card_y1 + card_h), (15, 15, 15), -1)
-        cv2.addWeighted(overlay, 0.85, frame, 0.15, 0, frame)
-        cv2.rectangle(frame, (card_x1, card_y1), (card_x1 + card_w, card_y1 + card_h), (0, 215, 255), 2)
+        # =====================================================================
+        # FULL-SCREEN OPAQUE START SCREEN (Dark Arcade Theme)
+        # =====================================================================
+        frame[:] = (25, 25, 30)  # Solid dark charcoal background
 
-        title_y = card_y1 + int(60 * SCALE)
-        cv2.putText(frame, "SHADOW-BOXER", (SCREEN_WIDTH // 2 - int(190 * SCALE), title_y),
-                    cv2.FONT_HERSHEY_DUPLEX, 1.25 * SCALE, (0, 255, 255), 2)
-        cv2.putText(frame, "ULTIMATE AR KINETIC ARCADE", (SCREEN_WIDTH // 2 - int(160 * SCALE), title_y + int(32 * SCALE)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.65 * SCALE, (200, 200, 200), 1)
+        # Subtle red accent border
+        cv2.rectangle(frame, (0, 0), (SCREEN_WIDTH - 1, SCREEN_HEIGHT - 1), (0, 0, 180), 3)
 
+        # Top decorative bar
+        bar_h = int(6 * SCALE)
+        cv2.rectangle(frame, (0, 0), (SCREEN_WIDTH, bar_h), (0, 0, 220), -1)
+
+        # Title Section
+        title_y = int(SCREEN_HEIGHT * 0.18)
+        cv2.putText(frame, "SHADOW-BOXER", (SCREEN_WIDTH // 2 - int(210 * SCALE), title_y),
+                    cv2.FONT_HERSHEY_DUPLEX, 1.5 * SCALE, (0, 0, 235), 3)
+        cv2.putText(frame, "KINETIC AR BOXING", (SCREEN_WIDTH // 2 - int(130 * SCALE), title_y + int(42 * SCALE)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7 * SCALE, (200, 200, 200), 1)
+
+        # Divider line
+        div_y = title_y + int(65 * SCALE)
+        cv2.line(frame, (SCREEN_WIDTH // 2 - int(200 * SCALE), div_y),
+                 (SCREEN_WIDTH // 2 + int(200 * SCALE), div_y), (0, 0, 140), 2)
+
+        # High Score Display
+        hs_y = div_y + int(45 * SCALE)
+        if high_score > 0:
+            cv2.putText(frame, f"PERSONAL BEST: {high_score}", (SCREEN_WIDTH // 2 - int(115 * SCALE), hs_y),
+                        cv2.FONT_HERSHEY_DUPLEX, 0.7 * SCALE, (0, 215, 255), 2)
+        else:
+            cv2.putText(frame, "NO HIGH SCORE YET", (SCREEN_WIDTH // 2 - int(110 * SCALE), hs_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6 * SCALE, (140, 140, 140), 1)
+
+        # Instructions
         instructions = [
-            "- Hit CYAN targets with LEFT glove, RED with RIGHT glove",
-            "- SHOUT / BATTLE CRY into microphone for 5x KIAI CRITICALS!",
-            "- Collect glowing POWER-UP ORBS (2x Damage, Slow-Mo, Shield)!",
-            "- SQUAT or CLAP to deflect the high-voltage laser hazard!",
-            "- Smash MINI-BOSSES to score massive bounty points!",
-            "- Controls: [SPACE] Start  |  [P] Pause  |  [F] Fullscreen  |  [Q] Quit"
+            "Hit CYAN targets with LEFT glove, RED with RIGHT",
+            "Land punches to charge KIAI ENERGY meter",
+            "At 100% energy: SHOUT while punching for bonus!",
+            "Collect POWER-UP ORBS for special abilities",
+            "SQUAT or CLAP to deflect laser hazards",
+            "Smash MINI-BOSSES for big bonus points",
         ]
 
-        text_y = title_y + int(80 * SCALE)
+        inst_y = hs_y + int(55 * SCALE)
         for line in instructions:
-            cv2.putText(frame, line, (card_x1 + int(35 * SCALE), text_y),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.52 * SCALE, (230, 230, 230), 1)
-            text_y += int(36 * SCALE)
+            cv2.putText(frame, line, (SCREEN_WIDTH // 2 - int(240 * SCALE), inst_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5 * SCALE, (180, 180, 180), 1)
+            inst_y += int(32 * SCALE)
 
-        cv2.putText(frame, "PRESS [SPACE] TO FIGHT!", (SCREEN_WIDTH // 2 - int(165 * SCALE), card_y1 + card_h - int(30 * SCALE)),
-                    cv2.FONT_HERSHEY_DUPLEX, 0.85 * SCALE, (0, 255, 100), 2)
+        # Controls bar at bottom
+        ctrl_y = int(SCREEN_HEIGHT * 0.82)
+        cv2.rectangle(frame, (0, ctrl_y - int(5 * SCALE)), (SCREEN_WIDTH, ctrl_y + int(40 * SCALE)), (35, 35, 40), -1)
+        cv2.putText(frame, "[SPACE] Start  |  [P] Pause  |  [F] Fullscreen  |  [Q] Quit",
+                    (SCREEN_WIDTH // 2 - int(270 * SCALE), ctrl_y + int(22 * SCALE)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55 * SCALE, (160, 160, 160), 1)
+
+        # Pulsing "PRESS SPACE TO FIGHT" button
+        pulse_alpha = 0.6 + 0.4 * math.sin(current_time * 4)
+        btn_color = (0, int(80 * pulse_alpha), int(220 * pulse_alpha))
+        btn_w = int(380 * SCALE)
+        btn_h = int(55 * SCALE)
+        btn_x = SCREEN_WIDTH // 2 - btn_w // 2
+        btn_y = int(SCREEN_HEIGHT * 0.72)
+        cv2.rectangle(frame, (btn_x, btn_y), (btn_x + btn_w, btn_y + btn_h), btn_color, -1)
+        cv2.rectangle(frame, (btn_x, btn_y), (btn_x + btn_w, btn_y + btn_h), (0, 0, 255), 2)
+        cv2.putText(frame, "PRESS [SPACE] TO FIGHT!", (btn_x + int(30 * SCALE), btn_y + int(36 * SCALE)),
+                    cv2.FONT_HERSHEY_DUPLEX, 0.8 * SCALE, (255, 255, 255), 2)
 
     elif GAME_STATE == "PAUSED":
-        # Pause Overlay
-        overlay = frame.copy()
-        cv2.rectangle(overlay, (0, 0), (SCREEN_WIDTH, SCREEN_HEIGHT), (10, 10, 10), -1)
-        cv2.addWeighted(overlay, 0.70, frame, 0.30, 0, frame)
+        # =====================================================================
+        # FULL-SCREEN OPAQUE PAUSE SCREEN
+        # =====================================================================
+        frame[:] = (25, 25, 30)  # Solid dark background
 
-        cv2.putText(frame, "GAME PAUSED", (SCREEN_WIDTH // 2 - int(160 * SCALE), SCREEN_HEIGHT // 2 - int(20 * SCALE)),
-                    cv2.FONT_HERSHEY_DUPLEX, 1.4 * SCALE, (0, 215, 255), 3)
-        cv2.putText(frame, "Press 'P' to Resume  |  'Q' to Quit", (SCREEN_WIDTH // 2 - int(180 * SCALE), SCREEN_HEIGHT // 2 + int(45 * SCALE)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.75 * SCALE, (255, 255, 255), 2)
+        # Red accent top/bottom bars
+        cv2.rectangle(frame, (0, 0), (SCREEN_WIDTH, int(6 * SCALE)), (0, 0, 220), -1)
+        cv2.rectangle(frame, (0, SCREEN_HEIGHT - int(6 * SCALE)), (SCREEN_WIDTH, SCREEN_HEIGHT), (0, 0, 220), -1)
+
+        # Title
+        pause_y = int(SCREEN_HEIGHT * 0.35)
+        cv2.putText(frame, "GAME PAUSED", (SCREEN_WIDTH // 2 - int(180 * SCALE), pause_y),
+                    cv2.FONT_HERSHEY_DUPLEX, 1.4 * SCALE, (255, 255, 255), 3)
+
+        # Accent line
+        cv2.line(frame, (SCREEN_WIDTH // 2 - int(150 * SCALE), pause_y + int(20 * SCALE)),
+                 (SCREEN_WIDTH // 2 + int(150 * SCALE), pause_y + int(20 * SCALE)), (0, 0, 200), 2)
+
+        # Current progress info during pause
+        info_y = pause_y + int(70 * SCALE)
+        cv2.putText(frame, f"CURRENT SCORE: {score}", (SCREEN_WIDTH // 2 - int(120 * SCALE), info_y),
+                    cv2.FONT_HERSHEY_DUPLEX, 0.7 * SCALE, (0, 215, 255), 2)
+        cv2.putText(frame, f"TIME REMAINING: {time_left}s", (SCREEN_WIDTH // 2 - int(120 * SCALE), info_y + int(35 * SCALE)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6 * SCALE, (200, 200, 200), 1)
+
+        # Resume / Quit prompt
+        opt_y = int(SCREEN_HEIGHT * 0.68)
+        cv2.putText(frame, "Press 'P' to Resume Match", (SCREEN_WIDTH // 2 - int(160 * SCALE), opt_y),
+                    cv2.FONT_HERSHEY_DUPLEX, 0.75 * SCALE, (0, 255, 100), 2)
+        cv2.putText(frame, "Press 'Q' to Quit", (SCREEN_WIDTH // 2 - int(90 * SCALE), opt_y + int(42 * SCALE)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6 * SCALE, (160, 160, 160), 1)
 
     elif GAME_STATE == "PLAYING":
         elapsed = current_time - round_start_time - total_paused_duration
@@ -772,6 +877,18 @@ while cap.isOpened():
 
         if time_left <= 0:
             GAME_STATE = "GAMEOVER"
+            kiai_mode = False  # End kiai mode on round end
+            # Check and save high score
+            prev_high_score = high_score
+            if score > high_score:
+                is_new_high_score = True
+                save_high_score(score)
+            else:
+                is_new_high_score = False
+
+        # Kiai Mode Expiration Check
+        if kiai_mode and current_time >= kiai_mode_end:
+            kiai_mode = False
 
         # Check Active Sonic Shield
         is_shield_up = (current_time - shield_start_time) < shield_duration or (active_powerup == "SHIELD" and current_time < powerup_end_time)
@@ -818,7 +935,7 @@ while cap.isOpened():
 
             if boss_hit and (current_time - boss_data["hit_flash_time"] > 0.22):
                 boss_data["hit_flash_time"] = current_time
-                is_kiai = (current_time - kiai_trigger_time) < 0.65
+                is_kiai = kiai_mode and (mic_volume > SHOUT_THRESHOLD)
 
                 # Apply impact recoil animation to hitting glove
                 if fist_l and dist_point_to_segment(prev_fist_l, fist_l, (bx, by)) < (br + GLOVE_RADIUS):
@@ -839,18 +956,36 @@ while cap.isOpened():
                 if combo > max_combo:
                     max_combo = combo
 
+                # Balanced boss hit scoring
+                boss_pts = 4 if is_kiai else (3 if boss_speed > 16 else 2)
+                if combo >= 3:
+                    boss_pts += 1
+                if is_kiai:
+                    kiai_strikes += 1
+                if active_powerup == "SCORE_BOOST" and current_time < powerup_end_time:
+                    boss_pts += 2
+                score += boss_pts
+
+                # Charge kiai energy on boss hits (extra energy)
+                if not kiai_mode:
+                    kiai_energy = min(KIAI_MAX, kiai_energy + KIAI_ENERGY_BOSS_HIT)
+                    if kiai_energy >= KIAI_MAX:
+                        kiai_mode = True
+                        kiai_mode_end = current_time + KIAI_MODE_DURATION
+                        kiai_mode_activated_time = current_time
+                        kiai_energy = 0
+
                 play_sfx("boss_hit")
                 trigger_haptic("boss")
 
                 if is_kiai:
-                    kiai_strikes += 1
                     screen_shake = 16
                     create_explosion(bx, by, (0, 215, 255), count=38, is_kiai=True)
-                    last_hit_text = f"CRITICAL BOSS STRIKE! -{dmg} HP"
+                    last_hit_text = f"KIAI BOSS STRIKE! +{boss_pts} -{dmg} HP"
                 else:
                     screen_shake = 7
                     create_explosion(bx, by, (0, 165, 255), count=18)
-                    last_hit_text = f"BOSS HIT! -{dmg} HP"
+                    last_hit_text = f"BOSS HIT! +{boss_pts} -{dmg} HP"
 
                 last_hit_time = current_time
 
@@ -861,7 +996,7 @@ while cap.isOpened():
                     screen_shake = 22
                     create_explosion(bx, by, (0, 215, 255), count=85, is_kiai=True)
                     play_sfx("boss_defeat")
-                    boss_bonus = 600 * max(1, combo)
+                    boss_bonus = 10
                     score += boss_bonus
                     last_hit_text = f"MINI-BOSS DESTROYED! +{boss_bonus} PTS!"
                     last_hit_time = current_time
@@ -901,10 +1036,11 @@ while cap.isOpened():
                     cfg = POWERUP_TYPES[active_powerup]
                     powerup_end_time = current_time + cfg["duration"]
                     powerups_collected += 1
+                    score += 5  # Special bonus for grabbing power-up
                     create_explosion(pux, puy, cfg["color"], count=32, is_kiai=True)
                     play_sfx("powerup")
                     trigger_haptic("powerup")
-                    last_hit_text = f"POWER-UP ACTIVATED: {cfg['name']}!"
+                    last_hit_text = f"POWER-UP: {cfg['label']}! +5"
                     last_hit_time = current_time
                     powerup_target = None
 
@@ -943,21 +1079,21 @@ while cap.isOpened():
                 laser_active = False
                 next_laser_time = current_time + random.uniform(10, 16)
                 if laser_deflected:
-                    score += 75
+                    score += 8
                     shields_deflected += 1
-                    last_hit_text = "ELECTRIC SHIELD DEFLECTION! +75"
+                    last_hit_text = "SHIELD DEFLECTION! +8"
                     last_hit_time = current_time
                     screen_shake = 7
                     create_explosion(SCREEN_WIDTH // 2, laser_y, (255, 255, 0), count=28, is_kiai=True)
                 elif laser_dodged:
-                    score += 50
+                    score += 5
                     dodges_completed += 1
-                    last_hit_text = "PERFECT DODGE! +50"
+                    last_hit_text = "PERFECT DODGE! +5"
                     last_hit_time = current_time
                 else:
-                    score = max(0, score - 30)
+                    score = max(0, score - 3)
                     combo = 0
-                    last_hit_text = "LASER HIT! -30"
+                    last_hit_text = "LASER HIT! -3"
                     last_hit_time = current_time
 
         # ---------------------------------------------------------------------
@@ -1013,7 +1149,8 @@ while cap.isOpened():
                 else:
                     glove_anim_r["recoil"] = 20.0 * SCALE
 
-                is_kiai = (current_time - kiai_trigger_time) < 0.65
+                # Kiai shout detection: only active during Kiai Mode
+                is_kiai = kiai_mode and (mic_volume > SHOUT_THRESHOLD)
 
                 if is_kiai:
                     kiai_strikes += 1
@@ -1031,20 +1168,36 @@ while cap.isOpened():
                 if combo > max_combo:
                     max_combo = combo
 
-                kmh = min(48.0, max(14.0, hit_speed * 1.8 + random.uniform(2, 6)))
-                if kmh > max_punch_speed:
-                    max_punch_speed = kmh
+                # ---- BALANCED SCORING SYSTEM ----
+                # Base points: 2 normal, 3 for fast/accurate punch
+                base_pts = 3 if hit_speed > 16 else 2
 
-                # Score multipliers
-                pts = (50 if is_kiai else 10) * combo
+                # Consecutive punch bonus: +1 if combo >= 3
+                combo_bonus = 1 if combo >= 3 else 0
+                base_pts += combo_bonus
+
+                # Kiai shout bonus: 4 pts (+ consecutive bonus)
+                if is_kiai:
+                    base_pts = 4 + combo_bonus
+
+                # Score Boost power-up: +2 points bonus
                 if active_powerup == "SCORE_BOOST" and current_time < powerup_end_time:
-                    pts *= 3
-                if active_powerup == "DOUBLE_DMG" and current_time < powerup_end_time:
-                    pts *= 2
+                    base_pts += 2
 
+                pts = base_pts
                 score += pts
-                tag = "FIRE KIAI CRITICAL!" if is_kiai else "CLEAN HIT!"
-                last_hit_text = f"{tag} +{pts} ({kmh:.1f} km/h)"
+
+                # Charge kiai energy on every successful hit
+                if not kiai_mode:
+                    kiai_energy = min(KIAI_MAX, kiai_energy + KIAI_ENERGY_PER_HIT)
+                    if kiai_energy >= KIAI_MAX:
+                        kiai_mode = True
+                        kiai_mode_end = current_time + KIAI_MODE_DURATION
+                        kiai_mode_activated_time = current_time
+                        kiai_energy = 0
+
+                tag = "KIAI SHOUT HIT!" if is_kiai else "CLEAN HIT!"
+                last_hit_text = f"{tag} +{pts}"
                 last_hit_time = current_time
 
                 # Immediate respawn
@@ -1054,19 +1207,43 @@ while cap.isOpened():
         update_and_draw_particles(frame)
 
         # ---------------------------------------------------------------------
-        # HEADS UP DISPLAY (HUD)
+        # HEADS UP DISPLAY (HUD) - Full-Screen Arcade Layout
         # ---------------------------------------------------------------------
-        header_h = int(54 * SCALE)
-        cv2.rectangle(frame, (0, 0), (SCREEN_WIDTH, header_h), (20, 20, 20), -1)
-        cv2.putText(frame, f"SCORE: {score}", (int(20 * SCALE), int(36 * SCALE)),
-                    cv2.FONT_HERSHEY_DUPLEX, 0.8 * SCALE, (0, 255, 255), 2)
-        cv2.putText(frame, f"TIME: {time_left}s", (SCREEN_WIDTH // 2 - int(55 * SCALE), int(36 * SCALE)),
-                    cv2.FONT_HERSHEY_DUPLEX, 0.8 * SCALE, (255, 255, 255), 2)
-        combo_c = (0, 255, 0) if combo < 5 else ((0, 165, 255) if combo < 12 else (0, 0, 255))
-        cv2.putText(frame, f"COMBO: x{combo}", (SCREEN_WIDTH - int(190 * SCALE), int(36 * SCALE)),
-                    cv2.FONT_HERSHEY_DUPLEX, 0.8 * SCALE, combo_c, 2)
+        # ---- TOP BAR: Score, Timer, Combo ----
+        header_h = int(58 * SCALE)
+        cv2.rectangle(frame, (0, 0), (SCREEN_WIDTH, header_h), (20, 20, 25), -1)
+        # Red accent line under header
+        cv2.line(frame, (0, header_h), (SCREEN_WIDTH, header_h), (0, 0, 200), 2)
 
-        # ACTIVE POWER-UP HUD BADGE (Top Center/Right)
+        # Score (left)
+        cv2.putText(frame, f"SCORE", (int(20 * SCALE), int(20 * SCALE)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.4 * SCALE, (160, 160, 160), 1)
+        cv2.putText(frame, f"{score}", (int(20 * SCALE), int(46 * SCALE)),
+                    cv2.FONT_HERSHEY_DUPLEX, 0.9 * SCALE, (255, 255, 255), 2)
+
+        # Timer (center) - MM:SS format
+        timer_mins = time_left // 60
+        timer_secs = time_left % 60
+        timer_str = f"{timer_mins:01d}:{timer_secs:02d}"
+        timer_color = (255, 255, 255) if time_left > 15 else (0, 0, 255)
+        cv2.putText(frame, timer_str, (SCREEN_WIDTH // 2 - int(45 * SCALE), int(44 * SCALE)),
+                    cv2.FONT_HERSHEY_DUPLEX, 1.1 * SCALE, timer_color, 2)
+        cv2.putText(frame, "TIME", (SCREEN_WIDTH // 2 - int(22 * SCALE), int(16 * SCALE)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.35 * SCALE, (160, 160, 160), 1)
+
+        # Combo (right)
+        combo_c = (0, 255, 0) if combo < 5 else ((0, 165, 255) if combo < 12 else (0, 0, 255))
+        cv2.putText(frame, "COMBO", (SCREEN_WIDTH - int(130 * SCALE), int(20 * SCALE)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.4 * SCALE, (160, 160, 160), 1)
+        cv2.putText(frame, f"x{combo}", (SCREEN_WIDTH - int(120 * SCALE), int(46 * SCALE)),
+                    cv2.FONT_HERSHEY_DUPLEX, 0.9 * SCALE, combo_c, 2)
+
+        # High Score (right of score)
+        hs_x = int(200 * SCALE)
+        cv2.putText(frame, f"BEST: {high_score}", (hs_x, int(44 * SCALE)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5 * SCALE, (0, 200, 220), 1)
+
+        # ---- ACTIVE POWER-UP HUD BADGE ----
         if active_powerup and current_time < powerup_end_time:
             cfg = POWERUP_TYPES[active_powerup]
             rem = powerup_end_time - current_time
@@ -1082,73 +1259,181 @@ while cap.isOpened():
             cv2.putText(frame, f"{cfg['name']} ({rem:.1f}s)", (bx + int(10 * SCALE), by + int(21 * SCALE)),
                         cv2.FONT_HERSHEY_DUPLEX, 0.48 * SCALE, (255, 255, 255), 1)
 
-        # Real-Time Microphone Energy / Kiai Pill (Bottom Left)
-        is_kiai_ready = (current_time - kiai_trigger_time) < 0.65
-        mic_bar_w = int(min(1.0, mic_volume / (KIAI_THRESHOLD * 1.5)) * int(120 * SCALE))
-        pill_y = SCREEN_HEIGHT - int(65 * SCALE)
+        # ---- KIAI ENERGY METER (Bottom Left) ----
+        kiai_bar_x = int(15 * SCALE)
+        kiai_bar_y = SCREEN_HEIGHT - int(80 * SCALE)
+        kiai_bar_w = int(220 * SCALE)
+        kiai_bar_h = int(22 * SCALE)
 
-        cv2.rectangle(frame, (int(15 * SCALE), pill_y), (int(210 * SCALE), pill_y + int(36 * SCALE)), (25, 25, 25), -1)
-        if is_kiai_ready:
-            cv2.rectangle(frame, (int(15 * SCALE), pill_y), (int(210 * SCALE), pill_y + int(36 * SCALE)), (0, 165, 255), 2)
-            cv2.putText(frame, "KIAI READY!", (int(28 * SCALE), pill_y + int(24 * SCALE)),
-                        cv2.FONT_HERSHEY_DUPLEX, 0.55 * SCALE, (0, 215, 255), 1)
+        # Background panel
+        cv2.rectangle(frame, (kiai_bar_x - 4, kiai_bar_y - int(24 * SCALE)),
+                      (kiai_bar_x + kiai_bar_w + 4, kiai_bar_y + kiai_bar_h + int(8 * SCALE)),
+                      (20, 20, 25), -1)
+
+        if kiai_mode:
+            # Kiai Mode ACTIVE: Show countdown
+            kiai_remaining = max(0, kiai_mode_end - current_time)
+            kiai_pct = kiai_remaining / KIAI_MODE_DURATION
+
+            # Flashing "KIAI MODE ACTIVE" label
+            flash = int(current_time * 6) % 2
+            label_color = (0, 215, 255) if flash else (0, 100, 255)
+            cv2.putText(frame, f"KIAI MODE! {kiai_remaining:.1f}s", (kiai_bar_x, kiai_bar_y - int(6 * SCALE)),
+                        cv2.FONT_HERSHEY_DUPLEX, 0.55 * SCALE, label_color, 2)
+
+            # Countdown bar (draining)
+            cv2.rectangle(frame, (kiai_bar_x, kiai_bar_y), (kiai_bar_x + kiai_bar_w, kiai_bar_y + kiai_bar_h), (40, 40, 50), -1)
+            fill_w = int(kiai_bar_w * kiai_pct)
+            if fill_w > 0:
+                cv2.rectangle(frame, (kiai_bar_x, kiai_bar_y), (kiai_bar_x + fill_w, kiai_bar_y + kiai_bar_h), (0, 215, 255), -1)
+            cv2.rectangle(frame, (kiai_bar_x, kiai_bar_y), (kiai_bar_x + kiai_bar_w, kiai_bar_y + kiai_bar_h), (0, 180, 255), 2)
+
+            # Mic volume indicator during kiai mode
+            mic_indicator_h = int(8 * SCALE)
+            mic_fill = int(min(1.0, mic_volume / (SHOUT_THRESHOLD * 1.5)) * kiai_bar_w)
+            mic_color = (0, 255, 100) if mic_volume > SHOUT_THRESHOLD else (80, 80, 80)
+            cv2.rectangle(frame, (kiai_bar_x, kiai_bar_y + kiai_bar_h + 2),
+                          (kiai_bar_x + mic_fill, kiai_bar_y + kiai_bar_h + mic_indicator_h + 2), mic_color, -1)
+            cv2.putText(frame, "SHOUT!", (kiai_bar_x + kiai_bar_w + int(8 * SCALE), kiai_bar_y + kiai_bar_h),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4 * SCALE, mic_color, 1)
         else:
-            cv2.rectangle(frame, (int(25 * SCALE), pill_y + int(22 * SCALE)),
-                          (int(25 * SCALE) + mic_bar_w, pill_y + int(28 * SCALE)), (0, 255, 100), -1)
-            cv2.putText(frame, "VOICE / KIAI", (int(25 * SCALE), pill_y + int(16 * SCALE)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.42 * SCALE, (180, 180, 180), 1)
+            # Energy charging mode
+            energy_pct = kiai_energy / KIAI_MAX
+            cv2.putText(frame, "KIAI ENERGY", (kiai_bar_x, kiai_bar_y - int(6 * SCALE)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45 * SCALE, (180, 180, 180), 1)
 
-        # Floating Hit Impact Toast
+            # Bar background
+            cv2.rectangle(frame, (kiai_bar_x, kiai_bar_y), (kiai_bar_x + kiai_bar_w, kiai_bar_y + kiai_bar_h), (40, 40, 50), -1)
+
+            # Filled portion with color gradient (gray -> yellow -> red as it fills)
+            fill_w = int(kiai_bar_w * energy_pct)
+            if energy_pct < 0.5:
+                bar_color = (0, 180, 255)  # Orange
+            elif energy_pct < 0.85:
+                bar_color = (0, 100, 255)  # Red-orange
+            else:
+                bar_color = (0, 0, 255)    # Bright red (almost ready!)
+            if fill_w > 0:
+                cv2.rectangle(frame, (kiai_bar_x, kiai_bar_y), (kiai_bar_x + fill_w, kiai_bar_y + kiai_bar_h), bar_color, -1)
+            cv2.rectangle(frame, (kiai_bar_x, kiai_bar_y), (kiai_bar_x + kiai_bar_w, kiai_bar_y + kiai_bar_h), (100, 100, 110), 2)
+
+            # Percentage text
+            cv2.putText(frame, f"{int(energy_pct * 100)}%", (kiai_bar_x + kiai_bar_w + int(8 * SCALE), kiai_bar_y + int(16 * SCALE)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45 * SCALE, (200, 200, 200), 1)
+
+        # ---- KIAI MODE ACTIVATION FLASH ----
+        if kiai_mode and (current_time - kiai_mode_activated_time) < 1.5:
+            flash_alpha = max(0, 1.0 - (current_time - kiai_mode_activated_time) / 1.5)
+            overlay_flash = frame.copy()
+            cv2.putText(overlay_flash, "KIAI MODE ACTIVATED!", (SCREEN_WIDTH // 2 - int(210 * SCALE), SCREEN_HEIGHT // 2),
+                        cv2.FONT_HERSHEY_DUPLEX, 1.2 * SCALE, (0, 215, 255), 3)
+            cv2.addWeighted(overlay_flash, flash_alpha, frame, 1.0 - flash_alpha, 0, frame)
+
+        # ---- Floating Hit Impact Toast ----
         if current_time - last_hit_time < 1.2:
             t_col = (0, 215, 255) if "KIAI" in last_hit_text or "BOSS" in last_hit_text else (0, 255, 255)
-            cv2.putText(frame, last_hit_text, (SCREEN_WIDTH // 2 - int(170 * SCALE), header_h + int(60 * SCALE)),
+            cv2.putText(frame, last_hit_text, (SCREEN_WIDTH // 2 - int(120 * SCALE), header_h + int(60 * SCALE)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.75 * SCALE, t_col, 2)
 
     elif GAME_STATE == "GAMEOVER":
-        # Post-Game Summary Card
-        overlay = frame.copy()
-        card_w = int(620 * SCALE)
-        card_h = int(490 * SCALE)
-        cx1 = SCREEN_WIDTH // 2 - card_w // 2
-        cy1 = SCREEN_HEIGHT // 2 - card_h // 2
-        cv2.rectangle(overlay, (cx1, cy1), (cx1 + card_w, cy1 + card_h), (15, 15, 15), -1)
-        cv2.addWeighted(overlay, 0.88, frame, 0.12, 0, frame)
-        cv2.rectangle(frame, (cx1, cy1), (cx1 + card_w, cy1 + card_h), (0, 215, 255), 2)
+        # =====================================================================
+        # FULL-SCREEN OPAQUE RESULTS SCREEN
+        # =====================================================================
+        frame[:] = (25, 25, 30)  # Solid dark background
 
-        cv2.putText(frame, "ROUND FINISHED!", (SCREEN_WIDTH // 2 - int(160 * SCALE), cy1 + int(50 * SCALE)),
-                    cv2.FONT_HERSHEY_DUPLEX, 1.1 * SCALE, (0, 255, 255), 2)
+        # Top accent bar
+        cv2.rectangle(frame, (0, 0), (SCREEN_WIDTH, int(6 * SCALE)), (0, 0, 220), -1)
 
-        cal_burned = total_punches * 0.18 + dodges_completed * 0.5 + kiai_strikes * 0.35 + shields_deflected * 0.6 + bosses_defeated * 1.5
-        stats = [
-            f"FINAL SCORE: {score}",
-            f"PUNCHES LANDED: {total_punches}",
-            f"MINI-BOSSES DEFEATED: {bosses_defeated}",
-            f"POWER-UPS COLLECTED: {powerups_collected}",
-            f"KIAI POWER STRIKES: {kiai_strikes} (5x BOOST!)",
-            f"LASERS DEFLECTED: {shields_deflected} (CLAP PARRY!)",
-            f"MAX COMBO STREAK: x{max_combo}",
-            f"TOP PUNCH SPEED: {max_punch_speed:.1f} km/h",
-            f"EST. CALORIES BURNED: {cal_burned:.1f} kcal",
+        # "ROUND COMPLETE" header
+        header_y = int(SCREEN_HEIGHT * 0.10)
+        cv2.putText(frame, "ROUND COMPLETE", (SCREEN_WIDTH // 2 - int(175 * SCALE), header_y),
+                    cv2.FONT_HERSHEY_DUPLEX, 1.2 * SCALE, (255, 255, 255), 2)
+
+        # Divider
+        div_y = header_y + int(25 * SCALE)
+        cv2.line(frame, (SCREEN_WIDTH // 2 - int(180 * SCALE), div_y),
+                 (SCREEN_WIDTH // 2 + int(180 * SCALE), div_y), (0, 0, 140), 2)
+
+        # ---- FINAL SCORE (prominent but balanced) ----
+        score_y = div_y + int(65 * SCALE)
+        cv2.putText(frame, "FINAL SCORE", (SCREEN_WIDTH // 2 - int(85 * SCALE), score_y - int(18 * SCALE)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55 * SCALE, (160, 160, 160), 1)
+        cv2.putText(frame, f"{score}", (SCREEN_WIDTH // 2 - int(55 * SCALE), score_y + int(25 * SCALE)),
+                    cv2.FONT_HERSHEY_DUPLEX, 1.4 * SCALE, (255, 255, 255), 3)
+
+        # ---- NEW HIGH SCORE celebration or Personal Best display ----
+        hs_y = score_y + int(65 * SCALE)
+        if is_new_high_score:
+            # Pulsing celebration
+            flash = int(current_time * 5) % 2
+            hs_color = (0, 0, 255) if flash else (0, 215, 255)
+            cv2.putText(frame, "NEW HIGH SCORE!", (SCREEN_WIDTH // 2 - int(145 * SCALE), hs_y),
+                        cv2.FONT_HERSHEY_DUPLEX, 0.9 * SCALE, hs_color, 2)
+            # Decorative stars
+            for offset in [-int(170 * SCALE), int(155 * SCALE)]:
+                star_x = SCREEN_WIDTH // 2 + offset
+                cv2.circle(frame, (star_x, hs_y - int(8 * SCALE)), int(6 * SCALE), (0, 215, 255), -1)
+            if prev_high_score > 0:
+                cv2.putText(frame, f"PREVIOUS BEST: {prev_high_score}", (SCREEN_WIDTH // 2 - int(105 * SCALE), hs_y + int(26 * SCALE)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5 * SCALE, (160, 160, 160), 1)
+        else:
+            cv2.putText(frame, f"PERSONAL BEST: {high_score}", (SCREEN_WIDTH // 2 - int(120 * SCALE), hs_y),
+                        cv2.FONT_HERSHEY_DUPLEX, 0.65 * SCALE, (0, 200, 220), 2)
+
+        # ---- Stats Section ----
+        stats_start_y = hs_y + int(55 * SCALE)
+        left_col_x = SCREEN_WIDTH // 2 - int(220 * SCALE)
+        right_col_x = SCREEN_WIDTH // 2 + int(30 * SCALE)
+        row_h = int(34 * SCALE)
+
+        # Left column stats
+        left_stats = [
+            ("PUNCHES LANDED", f"{total_punches}", (230, 230, 230)),
+            ("MINI-BOSSES DEFEATED", f"{bosses_defeated}", (0, 165, 255)),
+            ("KIAI SHOUT STRIKES", f"{kiai_strikes}", (0, 215, 255)),
         ]
 
-        stat_y = cy1 + int(95 * SCALE)
-        for s in stats:
-            if "SCORE" in s:
-                scol = (0, 255, 255)
-            elif "BOSS" in s:
-                scol = (0, 165, 255)
-            elif "KIAI" in s:
-                scol = (0, 215, 255)
-            elif "DEFLECTED" in s:
-                scol = (255, 255, 0)
-            else:
-                scol = (230, 230, 230)
-            cv2.putText(frame, s, (cx1 + int(45 * SCALE), stat_y),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.60 * SCALE, scol, 2)
-            stat_y += int(36 * SCALE)
+        # Right column stats
+        right_stats = [
+            ("POWER-UPS COLLECTED", f"{powerups_collected}", (230, 230, 230)),
+            ("LASERS DEFLECTED", f"{shields_deflected}", (0, 255, 255)),
+            ("MAX COMBO STREAK", f"x{max_combo}", (0, 255, 0)),
+        ]
 
-        cv2.putText(frame, "Press 'R' to Play Again  |  'Q' to Quit", (SCREEN_WIDTH // 2 - int(200 * SCALE), cy1 + card_h - int(25 * SCALE)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.65 * SCALE, (0, 255, 0), 2)
+        for i, (label, value, color) in enumerate(left_stats):
+            y = stats_start_y + i * row_h
+            cv2.putText(frame, label, (left_col_x, y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45 * SCALE, (140, 140, 140), 1)
+            cv2.putText(frame, value, (left_col_x + int(200 * SCALE), y),
+                        cv2.FONT_HERSHEY_DUPLEX, 0.55 * SCALE, color, 1)
+
+        for i, (label, value, color) in enumerate(right_stats):
+            y = stats_start_y + i * row_h
+            cv2.putText(frame, label, (right_col_x, y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45 * SCALE, (140, 140, 140), 1)
+            cv2.putText(frame, value, (right_col_x + int(200 * SCALE), y),
+                        cv2.FONT_HERSHEY_DUPLEX, 0.55 * SCALE, color, 1)
+
+        # ---- Bottom Buttons ----
+        btn_y = int(SCREEN_HEIGHT * 0.84)
+        # Play Again button
+        btn_w = int(260 * SCALE)
+        btn_h = int(50 * SCALE)
+        btn_x1 = SCREEN_WIDTH // 2 - btn_w - int(20 * SCALE)
+        cv2.rectangle(frame, (btn_x1, btn_y), (btn_x1 + btn_w, btn_y + btn_h), (0, 0, 160), -1)
+        cv2.rectangle(frame, (btn_x1, btn_y), (btn_x1 + btn_w, btn_y + btn_h), (0, 0, 220), 2)
+        cv2.putText(frame, "[R] PLAY AGAIN", (btn_x1 + int(40 * SCALE), btn_y + int(33 * SCALE)),
+                    cv2.FONT_HERSHEY_DUPLEX, 0.65 * SCALE, (255, 255, 255), 2)
+
+        # Quit button
+        btn_x2 = SCREEN_WIDTH // 2 + int(20 * SCALE)
+        cv2.rectangle(frame, (btn_x2, btn_y), (btn_x2 + btn_w, btn_y + btn_h), (40, 40, 45), -1)
+        cv2.rectangle(frame, (btn_x2, btn_y), (btn_x2 + btn_w, btn_y + btn_h), (100, 100, 110), 2)
+        cv2.putText(frame, "[Q] QUIT", (btn_x2 + int(65 * SCALE), btn_y + int(33 * SCALE)),
+                    cv2.FONT_HERSHEY_DUPLEX, 0.65 * SCALE, (200, 200, 200), 2)
+
+        # Bottom accent bar
+        cv2.rectangle(frame, (0, SCREEN_HEIGHT - int(6 * SCALE)), (SCREEN_WIDTH, SCREEN_HEIGHT), (0, 0, 220), -1)
 
     # Store previous fist positions for swept continuous collision detection
     prev_fist_l = fist_l
@@ -1191,13 +1476,17 @@ while cap.isOpened():
             shields_deflected = 0
             laser_deflected = False
             shield_start_time = 0.0
-            max_punch_speed = 0.0
             dodges_completed = 0
             boss_active = False
             boss_data = None
             boss_waves_spawned.clear()
             active_powerup = None
             powerup_target = None
+            kiai_energy = 0
+            kiai_mode = False
+            kiai_mode_end = 0.0
+            is_new_high_score = False
+            target = spawn_target()
     elif key == ord('r'):  # Restart
         GAME_STATE = "PLAYING"
         round_start_time = time.time()
@@ -1212,13 +1501,17 @@ while cap.isOpened():
         shields_deflected = 0
         laser_deflected = False
         shield_start_time = 0.0
-        max_punch_speed = 0.0
         dodges_completed = 0
         boss_active = False
         boss_data = None
         boss_waves_spawned.clear()
         active_powerup = None
         powerup_target = None
+        kiai_energy = 0
+        kiai_mode = False
+        kiai_mode_end = 0.0
+        is_new_high_score = False
+        target = spawn_target()
     elif key == ord('s'):  # Manual debug shortcut for Sonic Shield
         if GAME_STATE == "PLAYING":
             shield_start_time = current_time
