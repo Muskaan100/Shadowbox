@@ -1,93 +1,164 @@
-# 🥊 Shadow-Boxer: Multimodal Kinetic & Acoustic AR Boxer
+# 🕹️ SHADOWBOX: Dual-Game AR Arcade
 
-> **Hackathon Track:** Beginners Track — *The Exploration Arena*  
-> **Key Special Awards Targeted:** *Most Creative ML Use*, *Over-Engineered Masterpiece*, *Built in a Cave with a Box of Scraps*
+> **Zero-Controller, Real-Time Computer Vision Arcade Games for Laptop Webcams**  
+> Built with **Python**, **OpenCV**, **MediaPipe**, **NumPy**, and **Pygame**.  
+> Runs at **50–60 FPS entirely offline on local CPU / Integrated Graphics**.
 
 ---
 
-## 🌟 Overview
-**Shadow-Boxer** is a zero-controller, real-time Human-Computer Interface (HCI) and Augmented Reality (AR) boxing game that fuses **Computer Vision (Skeletal Pose Tracking)** and **Acoustic DSP (Non-Verbal Battle Cry Recognition)** into a seamless multimodal combat engine.
+## 🌟 The Arcade Experience
 
-Using **Google MediaPipe BlazePose** and real-time **RMS audio energy extraction**, it runs at **30–60 FPS directly on local CPU / Integrated Graphics** without requiring an external GPU, specialized hardware, or cloud APIs.
+**Shadowbox** features two complete, controller-free AR arcade games operated entirely through your physical body and natural hand motions:
 
 ```
- [Webcam 640x480 @ 60 FPS]          [Laptop Microphone Stream]
-             │                                   │
-             ▼                                   ▼
-[Google MediaPipe PoseLandmarker]     [Real-Time RMS Acoustic DSP]
-  (Extracts 33 Skeletal Joints)         (Kiai / Battle Cry Energy)
-             │                                   │
-      ┌──────┴──────┐                            │
-      ▼             ▼                            │
- [Wrists 15/16]  [Head Ducking]                  │
-  Punch Vectors   Laser Dodges                   │
-      │             │                            │
-      └──────┬──────┘                            │
-             ▼                                   ▼
-        ┌─────────────────────────────────────────────┐
-        │       MULTIMODAL AR GAME ARBITER            │
-        │ - Standard Punch: +10 pts * Combo           │
-        │ - Punch + Shout: 5x KIAI CRITICAL (+50 pts) │
-        │ - Dynamic Screen Shake & Golden Explosions  │
-        │ - Laser Dodge Hazard & Workout Analytics    │
-        └─────────────────────────────────────────────┘
+                                  ┌─────────────────────────────┐
+                                  │    04_arcade_launcher.py    │
+                                  │   (Arcade Selection Hub)    │
+                                  └──────────────┬──────────────┘
+                                                 │
+                        ┌────────────────────────┴────────────────────────┐
+                        ▼                                                 ▼
+        ┌───────────────────────────────┐                 ┌───────────────────────────────┐
+        │       1. SHADOW-BOXER         │                 │       2. FRUIT NINJA AR       │
+        │    02_shadow_boxer_game.py    │                 │    03_fruit_ninja_game.py     │
+        ├───────────────────────────────┤                 ├───────────────────────────────┤
+        │ • Skeletal Pose Tracking      │                 │ • Dual Hand Landmark Tracking │
+        │ • 33 BlazePose Keypoints      │                 │ • 21 Hand Joints (Fingertips) │
+        │ • Microphone Acoustic Kiai    │                 │ • Continuous Swept Slicing    │
+        │ • Mecha Mini-Boss Waves       │                 │ • Sliced Halves & Splatters   │
+        │ • Kinetic Laser Ducking       │                 │ • Bombs, Combos, Slow-Mo      │
+        └───────────────────────────────┘                 └───────────────────────────────┘
 ```
 
 ---
 
-## ⚡ Features
-- **Authentic Professional Boxing Gloves (Reference Match):** Redesigned from scratch to match professional 2D boxing gloves — rounded convex striking surface, curved ergonomic thumb with safety webbing, thick padded wrist cuff with velcro strap, double vertical stitch detailing, rolled bottom hem, soft leather specular highlights, and natural first-person forward perspective.
-- **Pure Punch-Only Audio (Zero Background Noise):** Complete audio silence during normal gameplay with zero ambient humming, loops, or movement sounds. Sound plays **only** upon successful physical impact against a target circle.
-- **Realistic Heavy Bag Impact Audio Bank:** 4 procedurally synthesized physical punch variations modeling leather slap transients (980–1400 Hz), foam compression mid-thud (165 $\to$ 58 Hz), and deep chest-thumping sub-bass (46–58 Hz) with analog soft-clipping tape saturation.
-- **Physical Punch Animations & First-Person Perspective:** Dynamic biomechanical extension, perspective zoom (+22% scale as fists punch toward the camera), fist pronation (inward rotation), and snappy 80ms impact spring recoil on target connection.
-- **Enlarged Detected Hand Tracking Anchors:** High-visibility luminous wrist tracking indicators coupled with forward-projected first-person gloves.
-- **Full-Screen Arcade Gameplay:** Launches natively in borderless full-screen (`cv2.WINDOW_FULLSCREEN`) with dynamic responsive UI scaling across all monitor resolutions and aspect ratios. Toggle anytime with `F`!
-- **High-Performance Low-Latency CPU Pipeline:** MediaPipe pose estimation runs on an optimized downsampled stream paired with Exponential Moving Average (EMA) sub-pixel smoothing, delivering steady 45–60 FPS and zero perceptible lag even on modest laptops!
-- **Continuous Swept Collision Detection:** Mathematical line-segment sweeping prevents fast punches from tunneling through targets, making punch registration forgiving, natural, and responsive.
-- **Mechanical Mini-Boss Waves:** Multi-hit armored bosses (*MECHA-BRUTE* and *CYBER-TITAN*) emerge with rotating spiked energy shields, floating segmented health bars, audio alarms, and huge point bounties.
-- **Glowing Power-Up Orbs:** Dynamic power-ups spawn throughout the match with live HUD countdown bars:
-  - 🔥 **Double Damage (2X DMG):** Punches inflict 2x damage on mini-bosses.
-  - ❄️ **Slow Motion (SLOW-MO):** Decelerates lasers and hazards.
-  - 🌟 **Score Multiplier (3X SCORE):** Triples all earned points.
-  - ⚡ **Rapid Fury (FURY):** Expands glove hitboxes by +55% with blazing glove fire.
-  - 🛡️ **Titanium Shield (SHIELD):** Auto-deflects hazards with total immunity.
-- **Multimodal "KIAI" Battle Cry:** Shouting or grunting while throwing a punch triggers a **5x Critical Power Strike** with dynamic screen shake, booming audio, and blazing golden particle bursts!
-- **Multimodal "Clap" Sonic Forcefield:** Clapping your hands together (dual-wrist proximity + acoustic transient spike) projects a glowing **Cyan Electric Forcefield** with electric zap audio that parries laser hazards for **+75 Parry Points**!
-- **Physical Dodge Hazard:** Full-body kinetic engagement — players can physically squat/duck under sweeping laser beams or deflect them with the Sonic Shield.
-- **Pause & Resume Controls:** Press `P` anytime to pause the action with a sleek translucent HUD card.
-- **Hardware Haptic Integration Ready:** Includes plug-and-play serial stubs to drive ₹200 Arduino vibration motors and LED strips on punches, Kiai strikes, and shield parries.
-- **Workout Analytics:** Post-match summary calculates score, punch count, mini-bosses defeated, power-ups collected, Kiai power strikes, laser deflections, peak velocity, dodges, and estimated calories burned.
-- **100% Offline & Private:** Zero GPU needed; runs on consumer CPU with TensorFlow Lite XNNPACK delegates.
+## 🍉 Game 2: Fruit Ninja AR (New Game Mode)
+
+**Fruit Ninja AR** brings the legendary fruit-slicing gameplay to your webcam without needing a touchscreen, mouse, or controller. Stand in front of your camera, raise your hands, and slice flying fruits out of the air with glowing laser blade streaks!
+
+### ⚡ Core Fruit Ninja Features:
+- **Dual-Hand Tracking:** Independently tracks both left and right hands using Google MediaPipe HandLandmarker Tasks API.
+  - Left Hand: **Electric Cyan Katana Blade**
+  - Right Hand: **Flaming Amber/Ruby Katana Blade**
+- **Continuous Swept Segment Anti-Tunneling:** Mathematical line-segment Euclidean projection checks slices between consecutive frames, guaranteeing fast ninja swipes never tunnel through targets.
+- **Physical Fruit Halves & Splatters:** Slicing cleanly splits fruits into two spinning halves that fly outward with opposing velocities and gravitational acceleration, accompanied by juicy droplet particles and cutting board decals.
+- **Three Distinct Game Modes:**
+  - 🍉 **Classic Mode:** 60-second timer, 3 lives (missed fruits cost a life), bombs included.
+  - 🍊 **Zen Mode:** Relaxed slicing with NO bombs, no life penalties, pure combo meditation.
+  - 🌟 **Arcade Mode:** 60-second high-density fruit frenzy with special powers and non-lethal bomb penalties (-25 points).
+- **Special Objects & Hazards:**
+  - 💣 **Classic Iron Bombs:** Distinct cartoon bomb with burning spark fuse. Slicing causes an explosive shockwave, screen flash, and violent screen shake!
+  - 🌟 **Golden Bonus Fruit:** Glowing metallic gold fruit worth +30 points and fireworks.
+  - ❄️ **Frozen Slow-Mo Fruit:** Freezes the arena, decelerating physics to $0.45\times$ speed for 4.5 seconds with frosty trails.
+- **Dynamic Combo System:** Slicing multiple fruits in a single swipe triggers ascending musical chord arpeggios (2x to 7x) and bonus combo points.
+- **Interactive Menu Targets:** Physically slice the floating watermelon, orange, golden fruit, or bomb on the Main Menu to pick your game mode!
+- **Persistent High Scores:** Local JSON records (`fruit_ninja_high_score.json`) save personal records across all game modes.
 
 ---
 
-## 🚀 Quickstart
+## 🥊 Game 1: Shadow-Boxer (AR Boxing)
 
-### 1. Requirements
-- Python 3.9+
-- Laptop webcam
+A multimodal kinetic combat game fusing skeletal pose tracking and acoustic voice recognition:
+- **Skeletal Pose Tracking:** Tracks 33 joints using MediaPipe Pose Landmarker Lite.
+- **Multimodal "KIAI" Battle Cry:** Shouting or grunting while throwing a punch activates a **5x Critical Strike** with dynamic golden explosions.
+- **Sonic Clap Forcefield:** Clapping your hands together projects an electric forcefield that parries incoming lasers.
+- **Armored Mini-Bosses:** Face off against *MECHA-BRUTE* and *CYBER-TITAN* with multi-segmented health bars and spiked shields.
+- **Workout Analytics:** Tracks punch count, peak velocity, dodges, and estimated calories burned.
+
+---
+
+## 🚀 Quickstart & Installation
+
+### 1. Prerequisites
+- Python 3.9 – 3.11
+- Laptop webcam and microphone
+- Windows, macOS, or Linux
 
 ### 2. Install Dependencies
 ```bash
-pip install opencv-python mediapipe numpy pygame
+# Clone the repository
+git clone https://github.com/Noobi-Programmer/Shadowbox.git
+cd Shadowbox
+
+# Install required packages
+pip install opencv-python mediapipe numpy pygame sounddevice pytest pillow
 ```
 
-### 3. Run the Game
-* **Step 1: Test your webcam & skeleton detection**
-  ```bash
-  python 01_test_skeleton.py
-  ```
-  *(Press `Q` to exit)*
+### 3. Launch the Games
 
-* **Step 2: Launch the full AR Boxing Game!**
+* **Launch the Unified Arcade Portal (Recommended):**
+  ```bash
+  python 04_arcade_launcher.py
+  ```
+  *(Press `1` for Boxing, `2` for Fruit Ninja, or `Q` to quit)*
+
+* **Or Launch Fruit Ninja directly:**
+  ```bash
+  python 03_fruit_ninja_game.py
+  ```
+  *(Optional: Add `--fullscreen` for borderless fullscreen)*
+
+* **Or Launch Shadow-Boxer directly:**
   ```bash
   python 02_shadow_boxer_game.py
   ```
-  *(Press `SPACE` to start, hit targets, duck lasers, `R` to restart, `Q` to exit)*
+
+* **Test your camera & MediaPipe skeleton detection:**
+  ```bash
+  python 01_test_skeleton.py
+  ```
 
 ---
 
-## 🛠️ Architecture & Hardware Optimization
-- **Model:** `pose_landmarker_lite.task` (~5.7 MB)
-- **Runtime:** TensorFlow Lite XNNPACK CPU delegate
-- **Resolution:** Frame scaled to $640 \times 480$ for low memory bandwidth and steady 60 FPS on integrated Intel UHD/Iris or AMD Radeon graphics.
+## 🎮 Fruit Ninja In-Game Controls & Shortcuts
+
+| Action | Physical Gesture / Key |
+|---|---|
+| **Slice Fruits & Menus** | Swipe left or right hand in front of webcam |
+| **Select Mode (Menu)** | Physically slice the floating labeled fruit target |
+| **Quick Start Mode** | Press `1` (Classic), `2` (Zen), `3` (Arcade), or `SPACE` |
+| **Pause / Resume** | Press `P` |
+| **Restart Match** | Press `R` |
+| **Toggle Camera Blend** | Press `B` (Cycles between Dojo Wood and AR Webcam overlay) |
+| **Toggle Audio Mute** | Press `M` |
+| **Return to Menu / Quit** | Press `ESC` or `Q` |
+
+---
+
+## ⚡ Performance & Benchmarks
+
+Benchmarked on local CPU / Integrated Graphics (no dedicated GPU required):
+
+| Pipeline Stage | Measured Latency | Measured Throughput |
+|---|---|---|
+| **MediaPipe Hand Landmarker** ($384 \times 288$ stream) | **17.9 ms** | **55.9 FPS** |
+| **Physics & Particle Simulation** (195 entities) | **0.095 ms** | **10,500+ FPS** |
+| **Engine Simulation & Slicing Loop** | **0.07 ms** | **14,000+ FPS** |
+| **Camera Buffer Conversion** | **0.057 ms** | **17,000+ FPS** |
+
+Detailed benchmark methodology is recorded in [PERFORMANCE_REPORT.md](PERFORMANCE_REPORT.md).
+
+---
+
+## 🧪 Testing Suite
+
+Run the automated test suite covering swept collision, physics, MediaPipe hand tracking, and launcher integration:
+
+```bash
+pytest tests/ -v
+```
+
+All 10 tests run in $< 5$ seconds. Detailed test cases and results are recorded in [TEST_REPORT.md](TEST_REPORT.md).
+
+---
+
+## 📜 Asset Credits & Licenses
+
+All assets are 100% free, open-source, CC0 (Public Domain), or procedurally generated:
+- **Audio & Particle FX:** Kenney (Kenney.nl) — CC0 1.0 Universal
+- **Retro Fruit Sprites:** Belohlavek (OpenGameArt.org) — CC0 1.0 Universal
+- **High-Res Fruit & Splatter Sprites:** Procedural generator (`generate_fruit_ninja_assets.py`)
+- **Procedural Audio Synthesizer:** Pure NumPy DSP (`fruit_sound_fx.py`)
+- **ML Models:** Google MediaPipe (`hand_landmarker.task`, `pose_landmarker_lite.task`) — Apache 2.0
+
+Complete attribution and source links are documented in [ASSET_CREDITS.md](ASSET_CREDITS.md).
