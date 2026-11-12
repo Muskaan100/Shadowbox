@@ -37,6 +37,13 @@ All visual and acoustic assets utilized in the **Shadowbox Fruit Ninja Game Mode
 | **Kenney Laser Slice Transient** | Kenney (Kenney.nl) | [https://github.com/KenneyNL/Starter-Kit-FPS](https://github.com/KenneyNL/Starter-Kit-FPS) | CC0 1.0 Universal | None | `assets/fruit_ninja/audio/kenney_laser_slice.ogg` |
 | **Kenney Bonus Chime** | Kenney (Kenney.nl) | [https://github.com/KenneyNL/Starter-Kit-3D-Platformer](https://github.com/KenneyNL/Starter-Kit-3D-Platformer) | CC0 1.0 Universal | None | `assets/fruit_ninja/audio/kenney_bonus.ogg` |
 | **Kenney Slice Crunch Impact** | Kenney (Kenney.nl) | [https://github.com/KenneyNL/Starter-Kit-3D-Platformer](https://github.com/KenneyNL/Starter-Kit-3D-Platformer) | CC0 1.0 Universal | None | `assets/fruit_ninja/audio/kenney_slice_impact.ogg` |
+| **Kenney Impact Punch Medium (000-002)** | Kenney (Kenney.nl) | [https://kenney.nl/assets/impact-sounds](https://kenney.nl/assets/impact-sounds) | CC0 1.0 Universal | None | `assets/audio/boxing/impact_punch_medium_000..002.ogg` |
+| **Kenney Impact Punch Heavy (000-002)** | Kenney (Kenney.nl) | [https://kenney.nl/assets/impact-sounds](https://kenney.nl/assets/impact-sounds) | CC0 1.0 Universal | None | `assets/audio/boxing/impact_punch_heavy_000..002.ogg` |
+| **Kenney Impact Soft Heavy (000-001)** | Kenney (Kenney.nl) | [https://kenney.nl/assets/impact-sounds](https://kenney.nl/assets/impact-sounds) | CC0 1.0 Universal | None | `assets/audio/boxing/impact_soft_heavy_000..001.ogg` |
+| **Kenney Impact Bell Heavy (000)** | Kenney (Kenney.nl) | [https://kenney.nl/assets/impact-sounds](https://kenney.nl/assets/impact-sounds) | CC0 1.0 Universal | None | `assets/audio/boxing/impact_bell_heavy_000.ogg` |
+| **Kenney Impact Metal Heavy (000-001)** | Kenney (Kenney.nl) | [https://kenney.nl/assets/impact-sounds](https://kenney.nl/assets/impact-sounds) | CC0 1.0 Universal | None | `assets/audio/boxing/impact_metal_heavy_000..001.ogg` |
+| **Kenney Impact Plate Heavy (000)** | Kenney (Kenney.nl) | [https://kenney.nl/assets/impact-sounds](https://kenney.nl/assets/impact-sounds) | CC0 1.0 Universal | None | `assets/audio/boxing/impact_plate_heavy_000.ogg` |
+| **Kenney Interface Sounds (Click, Select, Toggle, Open, Close, Confirm, Back, Error)** | Kenney (Kenney.nl) | [https://kenney.nl/assets/interface-sounds](https://kenney.nl/assets/interface-sounds) | CC0 1.0 Universal | None | `assets/audio/ui/click_001.wav`, `select_*.wav`, `toggle_*.wav`, `open_*.wav`, `close_*.wav`, `confirmation_*.wav`, `back_*.wav`, `error_*.wav` |
 | **Procedural Katana Blade Swoosh Bank (4 variations)** | Shadowbox Sound Engine (`fruit_sound_fx.py`) | Procedural Aerodynamic DSP | CC0 1.0 Universal | None | Generated dynamically via NumPy & Pygame |
 | **Procedural Watermelon Fleshy Squelch Bank** | Shadowbox Sound Engine (`fruit_sound_fx.py`) | Procedural Acoustic Compression DSP | CC0 1.0 Universal | None | Generated dynamically via NumPy & Pygame |
 | **Procedural Apple Crisp Crunch Bank** | Shadowbox Sound Engine (`fruit_sound_fx.py`) | Procedural Snappy Transient DSP | CC0 1.0 Universal | None | Generated dynamically via NumPy & Pygame |
@@ -45,10 +52,35 @@ All visual and acoustic assets utilized in the **Shadowbox Fruit Ninja Game Mode
 | **Procedural Bomb Detonation & Sub-Bass Shockwave** | Shadowbox Sound Engine (`fruit_sound_fx.py`) | Procedural Sub-Bass Detonation DSP | CC0 1.0 Universal | None | Generated dynamically via NumPy & Pygame |
 | **Procedural Pentatonic Combo Arpeggios (2x-7x)** | Shadowbox Sound Engine (`fruit_sound_fx.py`) | Procedural Harmonic Chime DSP | CC0 1.0 Universal | None | Generated dynamically via NumPy & Pygame |
 | **Procedural Dojo Bell & Game Over Stings** | Shadowbox Sound Engine (`fruit_sound_fx.py`) | Procedural Bell & Minor Drone DSP | CC0 1.0 Universal | None | Generated dynamically via NumPy & Pygame |
+| **Procedural Laser Sword Ignition Snap-Hiss** | Shadowbox Sound Engine (`fruit_sound_fx.py`) | Procedural Energy Plasma Power-On DSP | CC0 1.0 Universal | None | Generated dynamically via NumPy & Pygame |
+| **Procedural Laser Sword Retraction Collapse** | Shadowbox Sound Engine (`fruit_sound_fx.py`) | Procedural Plasma Collapse DSP | CC0 1.0 Universal | None | Generated dynamically via NumPy & Pygame |
+| **Procedural Laser Sword Resonant Swing Whoosh** | Shadowbox Sound Engine (`fruit_sound_fx.py`) | Procedural FM Plasma Humming Whoosh DSP | CC0 1.0 Universal | None | Generated dynamically via NumPy & Pygame |
+| **Procedural UI Navigation Click** | Shadowbox Sound Engine (`fruit_sound_fx.py`) | Procedural Transient Acoustic Click DSP | CC0 1.0 Universal | None | Generated dynamically via NumPy & Pygame |
 
 ---
 
-## 🤖 3. Machine Learning Models
+## 🎵 3. Background Music & Soundtracks
+
+| Asset Name | Creator | Original Source URL | License | Attribution Requirements | Local Filename |
+|---|---|---|---|---|---|
+| **Arcade Menu Theme ("Neon Pulse")** | Shadowbox Sound Engine (`generate_music_tracks.py`) | Procedural Synthesizer & FM Percussion | CC0 1.0 Universal | None | `assets/music/menu_theme.wav` |
+| **Shadow Boxing Theme ("Cyber Ring")** | Shadowbox Sound Engine (`generate_music_tracks.py`) | Procedural Bassline, Heavy Kick, & Lead Arp | CC0 1.0 Universal | None | `assets/music/boxing_theme.wav` |
+| **Fruit Ninja Theme ("Dojo Harmony")** | Shadowbox Sound Engine (`generate_music_tracks.py`) | Procedural Pentatonic Scales, Bamboo Flute & Gongs | CC0 1.0 Universal | None | `assets/music/fruit_ninja_theme.wav` |
+
+---
+
+## 🥊 4. Boxing Glove Cosmetic Skins
+
+| Asset Name | Creator | Generation Method | License | Attribution Requirements | Local Filename |
+|---|---|---|---|---|---|
+| **Classic Red Gloves (L & R)** | Shadowbox Procedural Engine (`generate_gloves.py`) | Procedural Pillow RGBA Rendering | CC0 1.0 Universal | None | `boxing_glove_left_classic_red.png`, `boxing_glove_right_classic_red.png` |
+| **Electric Blue Gloves (L & R)** | Shadowbox Procedural Engine (`generate_gloves.py`) | Procedural Pillow RGBA Rendering | CC0 1.0 Universal | None | `boxing_glove_left_electric_blue.png`, `boxing_glove_right_electric_blue.png` |
+| **Neon Purple Gloves (L & R)** | Shadowbox Procedural Engine (`generate_gloves.py`) | Procedural Pillow RGBA Rendering | CC0 1.0 Universal | None | `boxing_glove_left_neon_purple.png`, `boxing_glove_right_neon_purple.png` |
+| **Golden Champion Gloves (L & R)** | Shadowbox Procedural Engine (`generate_gloves.py`) | Procedural Pillow RGBA Rendering | CC0 1.0 Universal | None | `boxing_glove_left_golden.png`, `boxing_glove_right_golden.png` |
+
+---
+
+## 🤖 5. Machine Learning Models
 
 | Model | Provider | Source | License | Intended Use | Local Filename |
 |---|---|---|---|---|---|

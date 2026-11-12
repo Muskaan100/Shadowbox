@@ -14,6 +14,8 @@ import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
+from laser_sword import LaserSword
+
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "hand_landmarker.task")
 
 class BladeTrail:
@@ -80,7 +82,7 @@ class BladeTrail:
                 cv2.line(surface_or_frame, (int(x1), int(y1)), (int(x2), int(y2)), core_color, thick_inner)
 
 class HandData:
-    """Holds tracked landmarks and blade trail for one hand."""
+    """Holds tracked landmarks, blade trail, and fist laser sword for one hand."""
     def __init__(self, hand_label="Right", color=(0, 220, 255)):
         self.label = hand_label  # "Left" or "Right"
         self.is_present = False
@@ -92,8 +94,10 @@ class HandData:
         self.prev_index_tip = None
         self.trail = BladeTrail(color=color)
         self.last_seen = 0.0
+        # Dedicated Fist Laser Sword instance
+        self.sword = LaserSword(hand_label=hand_label)
 
-    def update(self, landmarks, screen_w, screen_h, confidence, now):
+    def update(self, landmarks, screen_w, screen_h, confidence, now, dt=0.033, auto_grip=False):
         self.is_present = True
         self.confidence = confidence
         self.last_seen = now
@@ -106,9 +110,9 @@ class HandData:
         mcp_lm = landmarks[9]
 
         self.prev_index_tip = self.index_tip
-        self.index_tip = (idx_lm.x * screen_w, idx_lm.y * screen_h)
-        self.middle_tip = (mid_lm.x * screen_w, mid_lm.y * screen_h)
-        self.thumb_tip = (thb_lm.x * screen_w, thb_lm.y * screen_h)
+        self.index_tip = (float(idx_lm.x * screen_w), float(idx_lm.y * screen_h))
+        self.middle_tip = (float(mid_lm.x * screen_w), float(mid_lm.y * screen_h))
+        self.thumb_tip = (float(thb_lm.x * screen_w), float(thb_lm.y * screen_h))
         
         # Palm center: midpoint between wrist and middle MCP
         self.palm_center = (
@@ -116,9 +120,18 @@ class HandData:
             0.5 * (wrist_lm.y + mcp_lm.y) * screen_h
         )
         
-        self.trail.add_point(self.index_tip[0], self.index_tip[1], now)
+        # Update Fist-Controlled Laser Sword first
+        self.sword.update_from_landmarks(landmarks, screen_w, screen_h, confidence, dt, auto_grip=auto_grip)
+        # Blade trail follows active sword tip (invariant to index fingertip)
+        if self.sword.is_active and self.sword.blade_tip:
+            self.trail.add_point(self.sword.blade_tip[0], self.sword.blade_tip[1], now)
+        elif self.sword.blade_tip:
+            self.trail.add_point(self.sword.blade_tip[0], self.sword.blade_tip[1], now)
+        else:
+            self.trail.add_point(self.palm_center[0], self.palm_center[1], now)
 
-    def mark_absent(self, now):
+    def mark_absent(self, now, dt=0.033):
+        self.sword.mark_absent(dt)
         if (now - self.last_seen) > 0.15:
             self.is_present = False
             self.prev_index_tip = None
@@ -126,7 +139,7 @@ class HandData:
             self.trail.clean(now)
 
 class HandTracker:
-    """Manages MediaPipe Hand Landmarker and coordinates dual-hand tracking."""
+    """Manages MediaPipe Hand Landmarker and coordinates dual-hand laser swords."""
     def __init__(self, model_path=None, max_hands=2):
         self.model_path = model_path or MODEL_PATH
         if not os.path.exists(self.model_path):
@@ -145,15 +158,40 @@ class HandTracker:
         # Left hand: Electric Cyan blade; Right hand: Flaming Amber/Ruby blade
         self.left_hand = HandData("Left", color=(255, 230, 20))
         self.right_hand = HandData("Right", color=(40, 130, 255))
+        self.left_sword = self.left_hand.sword
+        self.right_sword = self.right_hand.sword
         self.last_detection_time = time.time()
+        self.prev_process_time = time.time()
         self.hands_detected_count = 0
+        self.auto_grip = False
+        self.hand_mode = "BOTH"  # "BOTH", "RIGHT_ONLY", "LEFT_ONLY", "AUTO"
 
-    def process_frame(self, frame_bgr, screen_w, screen_h):
+    def get_swords(self):
+        """Returns list of both LaserSword instances."""
+        return [self.left_sword, self.right_sword]
+
+    def get_active_swords(self):
+        """Returns currently active/ignited LaserSword instances."""
+        return [s for s in [self.left_sword, self.right_sword] if s.is_active]
+
+    def process_frame(self, frame_bgr, screen_w, screen_h, dt=None, auto_grip=None, hand_mode=None):
         """
         Receives flipped BGR frame from webcam.
-        Runs fast CPU inference and updates tracked hands.
+        Runs fast CPU inference and updates tracked hands and laser swords.
         """
         now = time.time()
+        if dt is None:
+            dt = max(1e-4, min(0.066, now - self.prev_process_time))
+        self.prev_process_time = now
+        
+        if auto_grip is not None:
+            self.auto_grip = auto_grip
+        if hand_mode is not None:
+            self.hand_mode = hand_mode
+
+        # Snapshot current sword poses before inference for continuous swept collision
+        self.left_sword.set_previous_pose()
+        self.right_sword.set_previous_pose()
         
         # Resize to fast inference resolution (e.g. 384x288) to eliminate latency on CPU
         infer_frame = cv2.resize(frame_bgr, (384, 288), interpolation=cv2.INTER_LINEAR)
@@ -171,6 +209,10 @@ class HandTracker:
         right_found = False
         self.hands_detected_count = 0
 
+        # Hand filter flags
+        allow_left = (self.hand_mode in ["BOTH", "LEFT_ONLY", "AUTO"])
+        allow_right = (self.hand_mode in ["BOTH", "RIGHT_ONLY", "AUTO"])
+
         if result and result.hand_landmarks:
             self.hands_detected_count = len(result.hand_landmarks)
             self.last_detection_time = now
@@ -185,23 +227,23 @@ class HandTracker:
                     label = "Left" if cat.category_name == "Right" else "Right"
                     score = cat.score
 
-                if label == "Left" and not left_found:
-                    self.left_hand.update(landmarks, screen_w, screen_h, score, now)
+                if label == "Left" and not left_found and allow_left:
+                    self.left_hand.update(landmarks, screen_w, screen_h, score, now, dt=dt, auto_grip=self.auto_grip)
                     left_found = True
-                elif label == "Right" and not right_found:
-                    self.right_hand.update(landmarks, screen_w, screen_h, score, now)
+                elif label == "Right" and not right_found and allow_right:
+                    self.right_hand.update(landmarks, screen_w, screen_h, score, now, dt=dt, auto_grip=self.auto_grip)
                     right_found = True
-                elif not left_found:
-                    self.left_hand.update(landmarks, screen_w, screen_h, score, now)
+                elif not left_found and allow_left:
+                    self.left_hand.update(landmarks, screen_w, screen_h, score, now, dt=dt, auto_grip=self.auto_grip)
                     left_found = True
-                elif not right_found:
-                    self.right_hand.update(landmarks, screen_w, screen_h, score, now)
+                elif not right_found and allow_right:
+                    self.right_hand.update(landmarks, screen_w, screen_h, score, now, dt=dt, auto_grip=self.auto_grip)
                     right_found = True
 
         if not left_found:
-            self.left_hand.mark_absent(now)
+            self.left_hand.mark_absent(now, dt=dt)
         if not right_found:
-            self.right_hand.mark_absent(now)
+            self.right_hand.mark_absent(now, dt=dt)
 
         return self.left_hand, self.right_hand
 
@@ -213,37 +255,32 @@ class HandTracker:
     def seconds_since_last_hand(self):
         return time.time() - self.last_detection_time
 
-    def get_active_slices(self, min_velocity=140.0):
+    def get_active_slices(self, min_velocity=120.0):
         """
-        Returns list of active blade slice segments ((p1, p2), hand_label)
-        where hand is moving fast enough to constitute an intentional ninja slice.
+        Returns active blade slice segments ((p1, p2), hand_label).
+        Strictly sourced from active Laser Sword blade trajectory.
+        Index-fingertip fallback is completely removed.
         """
         slices = []
         for hand in [self.left_hand, self.right_hand]:
-            if hand.is_present and hand.index_tip and hand.prev_index_tip:
-                if hand.trail.velocity >= min_velocity:
-                    slices.append(((hand.prev_index_tip, hand.index_tip), hand.label))
-                else:
-                    # Even if velocity below threshold, allow short segment for immediate contact
-                    dx = hand.index_tip[0] - hand.prev_index_tip[0]
-                    dy = hand.index_tip[1] - hand.prev_index_tip[1]
-                    if math.hypot(dx, dy) > 8.0:
-                        slices.append(((hand.prev_index_tip, hand.index_tip), hand.label))
+            sword = hand.sword
+            if sword.is_active and sword.tracking_validity and sword.velocity >= min_velocity and sword.prev_tip:
+                slices.append(((sword.prev_tip, sword.blade_tip), hand.label))
         return slices
 
     def draw_blade_effects(self, frame_bgr):
-        """Renders laser blade trails and glowing reticles for detected hands."""
+        """Renders laser blade trails and sword geometry for detected hands (no fingertip reticles)."""
         for hand in [self.left_hand, self.right_hand]:
             if hand.trail.points:
                 hand.trail.draw(frame_bgr, is_cv2=True)
-            if hand.is_present and hand.index_tip:
-                ix, iy = int(hand.index_tip[0]), int(hand.index_tip[1])
-                b, g, r = hand.trail.color
-                # Glowing star reticle at fingertip
-                cv2.circle(frame_bgr, (ix, iy), 14, (int(b*0.4), int(g*0.4), int(r*0.4)), -1)
-                cv2.circle(frame_bgr, (ix, iy), 8, (b, g, r), -1)
-                cv2.circle(frame_bgr, (ix, iy), 3, (255, 255, 255), -1)
-                
-                # Crosshair spikes
-                cv2.line(frame_bgr, (ix - 16, iy), (ix + 16, iy), (255, 255, 255), 1)
-                cv2.line(frame_bgr, (ix, iy - 16), (ix, iy + 16), (255, 255, 255), 1)
+            if hand.sword.is_active or hand.sword.is_present:
+                hand.sword.render_cv2(frame_bgr)
+
+    def close(self):
+        """Cleanly releases MediaPipe HandLandmarker detector resources."""
+        if hasattr(self, "detector") and self.detector:
+            try:
+                self.detector.close()
+            except Exception:
+                pass
+            self.detector = None

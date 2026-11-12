@@ -37,6 +37,50 @@ def _to_sound(audio_mono, sample_rate=44100, volume=0.9):
     stereo = np.column_stack((audio_int, audio_int))
     return pygame.sndarray.make_sound(stereo)
 
+def synth_sword_ignite():
+    """Sci-Fi energy blade power-on snap-hiss."""
+    sr = 44100
+    dur = 0.28
+    t = np.linspace(0, dur, int(sr * dur), False)
+    freq = np.linspace(160, 1200, len(t))
+    tone = np.sin(2 * np.pi * freq * t) * np.exp(-4.5 * t)
+    hiss = np.random.uniform(-0.5, 0.5, len(t)) * np.exp(-14 * t)
+    hum = np.sin(2 * np.pi * 95 * t) * (1.0 - np.exp(-20 * t)) * np.exp(-3.0 * t)
+    wave = np.tanh(2.0 * (0.6 * tone + 0.4 * hiss + 0.5 * hum))
+    return _to_sound(wave, volume=0.9)
+
+def synth_sword_retract():
+    """Energy blade power-down collapse."""
+    sr = 44100
+    dur = 0.22
+    t = np.linspace(0, dur, int(sr * dur), False)
+    freq = np.linspace(950, 110, len(t))
+    tone = np.sin(2 * np.pi * freq * t) * np.exp(-8.0 * t)
+    wave = np.tanh(1.5 * tone)
+    return _to_sound(wave, volume=0.75)
+
+def synth_sword_swing(variation=0):
+    """Resonant plasma humming swing whoosh."""
+    sr = 44100
+    dur = 0.20 + variation * 0.03
+    t = np.linspace(0, dur, int(sr * dur), False)
+    f_start = 750 + variation * 150
+    f_end = 220 + variation * 40
+    freq = np.linspace(f_start, f_end, len(t))
+    plasma = np.sin(2 * np.pi * freq * t + 0.3 * np.sin(2 * np.pi * 120 * t))
+    air = np.random.uniform(-0.35, 0.35, len(t))
+    env = np.sin(np.pi * (t / dur)) ** 2.0
+    wave = np.tanh(1.8 * (0.7 * plasma + 0.3 * air) * env)
+    return _to_sound(wave, volume=0.88)
+
+def synth_ui_click():
+    """Crisp high-frequency UI button click."""
+    sr = 44100
+    dur = 0.05
+    t = np.linspace(0, dur, int(sr * dur), False)
+    wave = np.sin(2 * np.pi * 1400 * t) * np.exp(-120 * t)
+    return _to_sound(wave, volume=0.7)
+
 # -----------------------------------------------------------------------------
 # 1. PROCEDURAL SOUND SYNTHESIZERS
 # -----------------------------------------------------------------------------
@@ -163,31 +207,41 @@ def synth_countdown():
 
 class FruitAudioManager:
     def __init__(self, asset_dir=None):
-        self.asset_dir = asset_dir or os.path.join(os.path.dirname(__file__), "assets", "fruit_ninja", "audio")
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        self.asset_dirs = [
+            asset_dir,
+            os.path.join(base_dir, "assets", "audio", "fruit_ninja"),
+            os.path.join(base_dir, "assets", "fruit_ninja", "audio")
+        ]
+        self.ui_dir = os.path.join(base_dir, "assets", "audio", "ui")
         self.muted = False
         self.volume = 0.85
         self.sfx = {}
         self._load_and_synth()
-        
+
     def _load_and_synth(self):
-        # 1. Load CC0 Kenney files if present
+        # 1. Load CC0 Kenney files if present from search paths
         def load(rel):
-            p = os.path.join(self.asset_dir, rel)
-            if os.path.exists(p) and SOUND_AVAILABLE:
-                try:
-                    s = pygame.mixer.Sound(p)
-                    s.set_volume(self.volume)
-                    return s
-                except Exception:
-                    pass
+            for ad in self.asset_dirs:
+                if not ad:
+                    continue
+                p = os.path.join(ad, rel)
+                if os.path.exists(p) and SOUND_AVAILABLE:
+                    try:
+                        s = pygame.mixer.Sound(p)
+                        s.set_volume(self.volume)
+                        return s
+                    except Exception:
+                        pass
             return None
-            
+
         self.sfx["kenney_swoosh"] = load("kenney_swoosh.ogg")
         self.sfx["kenney_splat"] = load("kenney_splat.ogg")
         self.sfx["kenney_combo"] = load("kenney_combo.ogg")
         self.sfx["kenney_explosion"] = load("kenney_explosion.ogg")
         self.sfx["kenney_bonus"] = load("kenney_bonus.ogg")
         self.sfx["kenney_impact"] = load("kenney_slice_impact.ogg")
+        self.sfx["kenney_laser_slice"] = load("kenney_laser_slice.ogg")
         
         # 2. Pre-generate procedural bank for rapid, zero-lag response
         self.swoosh_bank = [synth_blade_swoosh(i) for i in range(4)]
@@ -203,64 +257,113 @@ class FruitAudioManager:
         self.countdown_snd = synth_countdown()
         self.game_over_snd = synth_game_over()
         self.combos = [synth_combo(m) for m in range(2, 8)]
+        
+        # Laser Sword Sound Bank
+        self.sword_ignite_snd = synth_sword_ignite()
+        self.sword_retract_snd = synth_sword_retract()
+        self.sword_swings = [synth_sword_swing(i) for i in range(4)]
+
+        # UI Click (Kenney UI or procedural fallback)
+        ui_click_path = os.path.join(self.ui_dir, "click_001.wav")
+        if os.path.exists(ui_click_path) and SOUND_AVAILABLE:
+            try:
+                self.ui_click_snd = pygame.mixer.Sound(ui_click_path)
+            except Exception:
+                self.ui_click_snd = synth_ui_click()
+        else:
+            self.ui_click_snd = synth_ui_click()
+
+    def _get_volume(self, vol_mult=1.0):
+        if self.muted:
+            return 0.0
+        try:
+            from music_manager import get_music_manager
+            mm = get_music_manager()
+            if mm.is_muted:
+                return 0.0
+            return max(0.0, min(1.0, mm.sfx_volume * vol_mult))
+        except Exception:
+            return max(0.0, min(1.0, self.volume * vol_mult))
+
+    def _play(self, snd, vol_mult=1.0):
+        if not snd or not SOUND_AVAILABLE:
+            return
+        vol = self._get_volume(vol_mult)
+        if vol <= 0.0:
+            return
+        try:
+            snd.set_volume(vol)
+            ch = pygame.mixer.find_channel()
+            if ch:
+                ch.play(snd)
+            else:
+                snd.play()
+        except Exception:
+            pass
+
+    def play_sword_ignite(self):
+        """Plays power-on snap-hiss when laser sword ignites."""
+        self._play(self.sword_ignite_snd, 0.95)
+
+    def play_sword_retract(self):
+        """Plays energy blade collapse."""
+        self._play(self.sword_retract_snd, 0.85)
+
+    def play_sword_swing(self, speed=0.0):
+        """Plays plasma blade humming swing whoosh."""
+        if self.sword_swings:
+            snd = random.choice(self.sword_swings)
+            self._play(snd, 0.90)
+
+    def play_ui_click(self):
+        """Plays crisp interface button click."""
+        self._play(self.ui_click_snd, 0.75)
 
     def play_swoosh(self):
-        if self.muted or not SOUND_AVAILABLE:
-            return
-        # Random pick
-        snd = random.choice(self.swoosh_bank)
-        if snd:
-            snd.play()
+        if self.sfx.get("kenney_swoosh"):
+            self._play(self.sfx["kenney_swoosh"], 0.85)
+        elif self.swoosh_bank:
+            snd = random.choice(self.swoosh_bank)
+            self._play(snd, 0.85)
 
     def play_slice(self, fruit_type="watermelon"):
-        if self.muted or not SOUND_AVAILABLE:
-            return
         bank = self.slice_bank.get(fruit_type, self.slice_bank["default"])
-        snd = random.choice(bank)
-        if snd:
-            snd.play()
-        # Also play a subtle wet splat
+        snd = random.choice(bank) if bank else None
+        self._play(snd, 0.95)
+
+        # Subtle wet splat accompanying slice
         if random.random() > 0.4:
-            sp = random.choice(self.splat_bank)
-            if sp:
-                sp.play()
+            if self.sfx.get("kenney_splat") and random.random() < 0.5:
+                self._play(self.sfx["kenney_splat"], 0.70)
+            elif self.splat_bank:
+                sp = random.choice(self.splat_bank)
+                self._play(sp, 0.70)
 
     def play_bomb(self):
-        if self.muted or not SOUND_AVAILABLE:
-            return
         # Play both kenney explosion if available and procedural shockwave
         if self.sfx.get("kenney_explosion"):
-            self.sfx["kenney_explosion"].play()
+            self._play(self.sfx["kenney_explosion"], 1.0)
         if self.bomb_explosion:
-            self.bomb_explosion.play()
+            self._play(self.bomb_explosion, 1.0)
 
     def play_combo(self, multiplier=2):
-        if self.muted or not SOUND_AVAILABLE:
-            return
-        idx = max(0, min(multiplier - 2, len(self.combos) - 1))
-        snd = self.combos[idx]
-        if snd:
-            snd.play()
+        if self.sfx.get("kenney_combo") and multiplier <= 3 and random.random() < 0.5:
+            self._play(self.sfx["kenney_combo"], 0.90)
+        elif self.combos:
+            idx = max(0, min(multiplier - 2, len(self.combos) - 1))
+            self._play(self.combos[idx], 0.92)
 
     def play_bonus(self):
-        if self.muted or not SOUND_AVAILABLE:
-            return
         if self.sfx.get("kenney_bonus"):
-            self.sfx["kenney_bonus"].play()
-        elif self.combos[-1]:
-            self.combos[-1].play()
+            self._play(self.sfx["kenney_bonus"], 0.95)
+        elif self.combos:
+            self._play(self.combos[-1], 0.95)
 
     def play_countdown(self):
-        if self.muted or not SOUND_AVAILABLE:
-            return
-        if self.countdown_snd:
-            self.countdown_snd.play()
+        self._play(self.countdown_snd, 0.90)
 
     def play_game_over(self):
-        if self.muted or not SOUND_AVAILABLE:
-            return
-        if self.game_over_snd:
-            self.game_over_snd.play()
+        self._play(self.game_over_snd, 0.95)
 
     def toggle_mute(self):
         self.muted = not self.muted

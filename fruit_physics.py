@@ -40,6 +40,40 @@ def swept_slice_collision(prev_pos, curr_pos, target_pos, target_radius, blade_r
     hit = dist <= (target_radius + blade_radius)
     return hit, contact
 
+def swept_blade_collision(prev_root, prev_tip, curr_root, curr_tip, target_pos, target_radius, blade_width=20.0, margin=14.0):
+    """
+    Mathematical continuous swept blade collision approximation for Laser Sword.
+    Tests swept blade capsule against target circle (fruit/bomb).
+    Returns (hit: bool, contact_point: tuple or None).
+    """
+    if None in (prev_root, prev_tip, curr_root, curr_tip):
+        return False, None
+
+    fx, fy = target_pos
+    eff_radius = target_radius + (blade_width * 0.5) + margin
+
+    # 1. Current blade line segment
+    d_curr, pt_curr = dist_point_to_segment(fx, fy, curr_root[0], curr_root[1], curr_tip[0], curr_tip[1])
+    if d_curr <= eff_radius:
+        return True, pt_curr
+
+    # 2. Previous blade line segment
+    d_prev, pt_prev = dist_point_to_segment(fx, fy, prev_root[0], prev_root[1], prev_tip[0], prev_tip[1])
+    if d_prev <= eff_radius:
+        return True, pt_prev
+
+    # 3. Swept trajectory segments along length of blade (Root, 25%, 50%, 75%, Tip)
+    for s in (0.0, 0.25, 0.50, 0.75, 1.0):
+        p1x = prev_root[0] + s * (prev_tip[0] - prev_root[0])
+        p1y = prev_root[1] + s * (prev_tip[1] - prev_root[1])
+        p2x = curr_root[0] + s * (curr_tip[0] - curr_root[0])
+        p2y = curr_root[1] + s * (curr_tip[1] - curr_root[1])
+        d, pt = dist_point_to_segment(fx, fy, p1x, p1y, p2x, p2y)
+        if d <= eff_radius:
+            return True, pt
+
+    return False, None
+
 class FruitObject:
     """Represents a flying whole fruit or bomb hazard."""
     def __init__(self, obj_id, fruit_type, x, y, vx, vy, gravity=980.0, radius=52.0, is_bomb=False, special=None):
@@ -192,9 +226,10 @@ class WaveSpawner:
         self.time_to_next_wave = 1.0
         self.wave_counter = 0
 
-    def get_wave(self, mode="CLASSIC", dt=0.016):
+    def get_wave(self, mode="CLASSIC", dt=0.016, difficulty="EASY"):
         """
         Calculates when to launch a new wave of fruits and bombs.
+        difficulty: "EASY" (default), "CLASSIC", "EXPERT"
         Returns list of new FruitObject instances.
         """
         self.time_to_next_wave -= dt
@@ -205,26 +240,53 @@ class WaveSpawner:
         spawned = []
         
         # Difficulty scaling
-        if mode == "CLASSIC":
-            wave_size = random.choices([1, 2, 3, 4], weights=[0.25, 0.45, 0.20, 0.10])[0]
-            self.time_to_next_wave = random.uniform(1.8, 3.2)
-            bomb_chance = 0.28 if self.wave_counter > 2 else 0.0
-        elif mode == "ARCADE":
-            wave_size = random.choices([2, 3, 4, 5], weights=[0.2, 0.4, 0.3, 0.1])[0]
-            self.time_to_next_wave = random.uniform(1.2, 2.4)
-            bomb_chance = 0.35
-        else:  # ZEN
-            wave_size = random.choices([1, 2, 3], weights=[0.4, 0.45, 0.15])[0]
-            self.time_to_next_wave = random.uniform(2.2, 3.8)
-            bomb_chance = 0.0  # Zen has NO bombs
+        if difficulty == "EASY":
+            if mode == "CLASSIC":
+                wave_size = random.choices([1, 2, 3], weights=[0.55, 0.35, 0.10])[0]
+                self.time_to_next_wave = random.uniform(2.4, 3.8)
+                bomb_chance = 0.14 if self.wave_counter > 3 else 0.0
+            elif mode == "ARCADE":
+                wave_size = random.choices([1, 2, 3, 4], weights=[0.35, 0.40, 0.20, 0.05])[0]
+                self.time_to_next_wave = random.uniform(1.8, 2.8)
+                bomb_chance = 0.20
+            else:  # ZEN
+                wave_size = random.choices([1, 2], weights=[0.6, 0.4])[0]
+                self.time_to_next_wave = random.uniform(2.6, 4.2)
+                bomb_chance = 0.0
+        elif difficulty == "EXPERT":
+            if mode == "CLASSIC":
+                wave_size = random.choices([2, 3, 4, 5], weights=[0.20, 0.40, 0.30, 0.10])[0]
+                self.time_to_next_wave = random.uniform(1.2, 2.2)
+                bomb_chance = 0.38
+            elif mode == "ARCADE":
+                wave_size = random.choices([3, 4, 5, 6], weights=[0.2, 0.35, 0.3, 0.15])[0]
+                self.time_to_next_wave = random.uniform(0.9, 1.8)
+                bomb_chance = 0.42
+            else:  # ZEN
+                wave_size = random.choices([2, 3, 4], weights=[0.3, 0.5, 0.2])[0]
+                self.time_to_next_wave = random.uniform(1.5, 2.8)
+                bomb_chance = 0.0
+        else: # Standard CLASSIC difficulty
+            if mode == "CLASSIC":
+                wave_size = random.choices([1, 2, 3, 4], weights=[0.25, 0.45, 0.20, 0.10])[0]
+                self.time_to_next_wave = random.uniform(1.8, 3.2)
+                bomb_chance = 0.28 if self.wave_counter > 2 else 0.0
+            elif mode == "ARCADE":
+                wave_size = random.choices([2, 3, 4, 5], weights=[0.2, 0.4, 0.3, 0.1])[0]
+                self.time_to_next_wave = random.uniform(1.2, 2.4)
+                bomb_chance = 0.35
+            else:  # ZEN
+                wave_size = random.choices([1, 2, 3], weights=[0.4, 0.45, 0.15])[0]
+                self.time_to_next_wave = random.uniform(2.2, 3.8)
+                bomb_chance = 0.0
 
         for _ in range(wave_size):
-            obj = self._spawn_single(bomb_chance=bomb_chance, mode=mode)
+            obj = self._spawn_single(bomb_chance=bomb_chance, mode=mode, difficulty=difficulty)
             spawned.append(obj)
             
         return spawned
 
-    def _spawn_single(self, bomb_chance=0.25, mode="CLASSIC"):
+    def _spawn_single(self, bomb_chance=0.25, mode="CLASSIC", difficulty="EASY"):
         obj_id = self.next_obj_id
         self.next_obj_id += 1
         
@@ -236,7 +298,7 @@ class WaveSpawner:
             fruit_type = "bomb"
             radius = 48.0
         else:
-            # Special fruit check (Golden or Frozen)
+            # Special fruit check (Golden, Frozen, or Heart Extra-Life)
             r_spec = random.random()
             if r_spec < 0.05:
                 fruit_type = "golden_fruit"
@@ -246,9 +308,23 @@ class WaveSpawner:
                 fruit_type = "frozen_fruit"
                 special = "frozen"
                 radius = 54.0
+            elif r_spec < 0.14 and mode == "CLASSIC":
+                fruit_type = "heart_fruit"
+                special = "heart"
+                radius = 50.0
             else:
                 fruit_type = random.choice(FRUIT_TYPES)
                 radius = 52.0 if fruit_type == "watermelon" else (42.0 if fruit_type in ["strawberry", "kiwi"] else 48.0)
+
+        # Scale parameters by difficulty
+        if difficulty == "EASY":
+            radius *= 1.20  # Forgiving, larger fruits!
+            gravity = 840.0 # Floatier, longer air-time!
+        elif difficulty == "EXPERT":
+            radius *= 0.90
+            gravity = 1040.0
+        else:
+            gravity = 980.0
 
         # Launch physics: varied positions along bottom screen
         # Fruits arc inward towards center zone (0.35 * w to 0.65 * w)
@@ -258,7 +334,6 @@ class WaveSpawner:
         target_center_x = random.uniform(0.35 * self.w, 0.65 * self.w)
         target_apex_y = random.uniform(0.18 * self.h, 0.40 * self.h)
         
-        gravity = 980.0
         # Time to reach apex: vy = -sqrt(2 * g * delta_y)
         delta_y = spawn_y - target_apex_y
         vy = -math.sqrt(2.0 * gravity * delta_y)
