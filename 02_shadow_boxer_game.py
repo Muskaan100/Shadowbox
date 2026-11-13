@@ -89,7 +89,7 @@ kiai_energy = 0
 KIAI_ENERGY_PER_HIT = 8       # Energy gained per successful target hit
 KIAI_ENERGY_BOSS_HIT = 15     # Extra energy per mini-boss hit
 KIAI_MODE_DURATION = 10.0     # Kiai bonus mode lasts 10 seconds
-SHOUT_THRESHOLD = 0.08        # Mic RMS threshold for detecting a shout
+SHOUT_THRESHOLD = 0.038       # Calibrated acoustic RMS threshold for Kiai battle cry
 kiai_mode = False
 kiai_mode_end = 0.0
 kiai_mode_activated_time = 0.0  # For activation flash display
@@ -146,7 +146,7 @@ music_mgr.play_boxing_theme()
 AUDIO_AVAILABLE = False
 show_diagnostic = False
 mic_volume = 0.0
-KIAI_THRESHOLD = 0.075
+KIAI_THRESHOLD = 0.038
 
 clap_detector = ClapDetector(sample_rate=44100, block_size=512, cooldown_sec=1.5)
 clap_detector.sensitivity = player_prefs.get("mic_sensitivity", 1.0)
@@ -160,24 +160,39 @@ def audio_callback(indata, frames, time_info, status):
     mic_volume = clap_detector.vocal_rms
 
 audio_stream = None
-try:
-    audio_stream = sd.InputStream(channels=1, samplerate=44100, callback=audio_callback, blocksize=512)
-    audio_stream.start()
-    AUDIO_AVAILABLE = True
-    clap_detector.mic_available = True
-    print("[Audio DSP] 44.1 kHz Transient Clap & Kiai stream active!")
-except Exception as e:
-    try:
-        audio_stream = sd.InputStream(channels=1, samplerate=16000, callback=audio_callback, blocksize=256)
-        audio_stream.start()
-        AUDIO_AVAILABLE = True
-        clap_detector.mic_available = True
-        print(f"[Audio DSP] 16 kHz fallback active: {e}")
-    except Exception as e2:
-        print(f"[Audio DSP Warning] Microphone unavailable: {e2}. Falling back to Vision.")
-        audio_stream = None
-        AUDIO_AVAILABLE = False
-        clap_detector.mic_available = False
+
+def init_audio_stream():
+    """Robustly attempt to initialize the microphone input stream with multiple fallbacks."""
+    global audio_stream, AUDIO_AVAILABLE
+    attempts = [
+        {"channels": 1, "samplerate": 44100, "blocksize": 512, "desc": "44.1 kHz Mono"},
+        {"channels": 2, "samplerate": 44100, "blocksize": 512, "desc": "44.1 kHz Stereo Array"},
+        {"channels": 1, "samplerate": 16000, "blocksize": 256, "desc": "16 kHz Mono"},
+        {"channels": 2, "samplerate": 16000, "blocksize": 256, "desc": "16 kHz Stereo"}
+    ]
+    for cfg in attempts:
+        try:
+            stream = sd.InputStream(
+                channels=cfg["channels"],
+                samplerate=cfg["samplerate"],
+                callback=audio_callback,
+                blocksize=cfg["blocksize"]
+            )
+            stream.start()
+            audio_stream = stream
+            AUDIO_AVAILABLE = True
+            clap_detector.mic_available = True
+            print(f"[Audio DSP] Active microphone stream: {cfg['desc']} (sensitivity: {clap_detector.sensitivity}x)")
+            return True
+        except Exception:
+            continue
+    return False
+
+if not init_audio_stream():
+    print("[Audio DSP Warning] Standard microphone stream unavailable. Falling back to Vision.")
+    audio_stream = None
+    AUDIO_AVAILABLE = False
+    clap_detector.mic_available = False
 
 # Initialize optional Arduino haptic stub
 init_haptic()
@@ -823,8 +838,8 @@ try:
             # Instructions
             instructions = [
                 "Hit CYAN targets with LEFT glove, RED with RIGHT",
-                "Land punches to charge KIAI ENERGY meter",
-                "At 100% energy: SHOUT while punching for bonus!",
+                "SHOUT into mic while punching for KIAI CRITICAL hits!",
+                "Punches & battle cries charge KIAI OVERDRIVE (10s bonus)",
                 "Collect POWER-UP ORBS for special abilities",
                 "SQUAT or CLAP to deflect laser hazards",
                 "Smash MINI-BOSSES for big bonus points",
@@ -957,7 +972,9 @@ try:
     
                 if boss_hit and (current_time - boss_data["hit_flash_time"] > 0.22):
                     boss_data["hit_flash_time"] = current_time
-                    is_kiai = kiai_mode and (mic_volume > SHOUT_THRESHOLD)
+                    # Multimodal Kiai: active if player shouted recently or during Kiai Mode
+                    shout_active = clap_detector.has_recent_shout(window_sec=0.6) or (mic_volume > SHOUT_THRESHOLD)
+                    is_kiai = shout_active or kiai_mode
     
                     # Apply impact recoil animation to hitting glove
                     if fist_l and dist_point_to_segment(prev_fist_l, fist_l, (bx, by)) < (br + GLOVE_RADIUS):
@@ -979,7 +996,7 @@ try:
                         max_combo = combo
     
                     # Balanced boss hit scoring
-                    boss_pts = 4 if is_kiai else (3 if boss_speed > 16 else 2)
+                    boss_pts = 5 if (is_kiai and shout_active) else (4 if is_kiai else (3 if boss_speed > 16 else 2))
                     if combo >= 3:
                         boss_pts += 1
                     if is_kiai:
@@ -987,28 +1004,32 @@ try:
                     if active_powerup == "SCORE_BOOST" and current_time < powerup_end_time:
                         boss_pts += 2
                     score += boss_pts
-    
-                    # Charge kiai energy on boss hits (extra energy)
+
+                    # Charge kiai energy on boss hits (+ extra charge for battle cry)
                     if not kiai_mode:
-                        kiai_energy = min(KIAI_MAX, kiai_energy + KIAI_ENERGY_BOSS_HIT)
+                        hit_charge = KIAI_ENERGY_BOSS_HIT + (15 if shout_active else 0)
+                        kiai_energy = min(KIAI_MAX, kiai_energy + hit_charge)
                         if kiai_energy >= KIAI_MAX:
                             kiai_mode = True
                             kiai_mode_end = current_time + KIAI_MODE_DURATION
                             kiai_mode_activated_time = current_time
                             kiai_energy = 0
-    
-                    play_sfx("boss_hit")
-                    trigger_haptic("boss")
-    
+
                     if is_kiai:
-                        screen_shake = 16
-                        create_explosion(bx, by, (0, 215, 255), count=38, is_kiai=True)
-                        last_hit_text = f"KIAI BOSS STRIKE! +{boss_pts} -{dmg} HP"
+                        screen_shake = 18 if shout_active else 12
+                        create_explosion(bx, by, (0, 215, 255), count=42 if shout_active else 30, is_kiai=True)
+                        last_hit_text = f"KIAI CRITICAL BOSS STRIKE! +{boss_pts} -{dmg} HP" if shout_active else f"KIAI BOSS STRIKE! +{boss_pts} -{dmg} HP"
+                        play_sfx("critical")
+                        trigger_haptic("kiai")
+                        if shout_active:
+                            clap_detector.consume_shout()
                     else:
+                        play_sfx("boss_hit")
+                        trigger_haptic("boss")
                         screen_shake = 7
                         create_explosion(bx, by, (0, 165, 255), count=18)
                         last_hit_text = f"BOSS HIT! +{boss_pts} -{dmg} HP"
-    
+
                     last_hit_time = current_time
     
                     # Check Boss Defeat
@@ -1181,58 +1202,61 @@ try:
                     else:
                         glove_anim_r["recoil"] = 20.0 * SCALE
     
-                    # Kiai shout detection: only active during Kiai Mode
-                    is_kiai = kiai_mode and (mic_volume > SHOUT_THRESHOLD)
-    
+                    # Multimodal Kiai shout detection: recent shout or active Kiai Mode
+                    shout_active = clap_detector.has_recent_shout(window_sec=0.6) or (mic_volume > SHOUT_THRESHOLD)
+                    is_kiai = shout_active or kiai_mode
+
                     if is_kiai:
                         kiai_strikes += 1
-                        screen_shake = 10
-                        create_explosion(target["x"], target["y"], t_color, count=36, is_kiai=True)
+                        screen_shake = 12 if shout_active else 8
+                        create_explosion(target["x"], target["y"], t_color, count=36 if shout_active else 26, is_kiai=True)
                         play_sfx("critical")
                         trigger_haptic("kiai")
+                        if shout_active:
+                            clap_detector.consume_shout()
                     else:
                         create_explosion(target["x"], target["y"], t_color, count=16)
                         play_sfx("punch")
                         trigger_haptic("punch")
-    
+
                     total_punches += 1
                     combo += 1
                     if combo > max_combo:
                         max_combo = combo
-    
+
                     # ---- BALANCED SCORING SYSTEM ----
                     # Base points: 2 normal, 3 for fast/accurate punch
                     base_pts = 3 if hit_speed > 16 else 2
-    
+
                     # Consecutive punch bonus: +1 if combo >= 3
                     combo_bonus = 1 if combo >= 3 else 0
                     base_pts += combo_bonus
-    
-                    # Kiai shout bonus: 4 pts (+ consecutive bonus)
+
+                    # Kiai shout bonus: 5 pts for acoustic shout, 4 for Kiai Mode (+ combo bonus)
                     if is_kiai:
-                        base_pts = 4 + combo_bonus
-    
+                        base_pts = (5 if shout_active else 4) + combo_bonus
+
                     # Score Boost power-up: +2 points bonus
                     if active_powerup == "SCORE_BOOST" and current_time < powerup_end_time:
                         base_pts += 2
-    
+
                     pts = base_pts
                     score += pts
-    
-                    # Charge kiai energy on every successful hit
+
+                    # Charge kiai energy on every hit (+ extra charge when shouting!)
                     if not kiai_mode:
-                        kiai_energy = min(KIAI_MAX, kiai_energy + KIAI_ENERGY_PER_HIT)
+                        hit_charge = KIAI_ENERGY_PER_HIT + (12 if shout_active else 0)
+                        kiai_energy = min(KIAI_MAX, kiai_energy + hit_charge)
                         if kiai_energy >= KIAI_MAX:
                             kiai_mode = True
                             kiai_mode_end = current_time + KIAI_MODE_DURATION
                             kiai_mode_activated_time = current_time
                             kiai_energy = 0
-    
-                    tag = "KIAI SHOUT HIT!" if is_kiai else "CLEAN HIT!"
+
+                    tag = "KIAI CRITICAL HIT!" if (is_kiai and shout_active) else ("KIAI MODE HIT!" if is_kiai else "CLEAN HIT!")
                     last_hit_text = f"{tag} +{pts}"
                     last_hit_time = current_time
-    
-                    # Immediate respawn
+
                     target = spawn_target()
     
             # Update flying particle system
@@ -1296,47 +1320,38 @@ try:
             kiai_bar_y = SCREEN_HEIGHT - int(80 * SCALE)
             kiai_bar_w = int(220 * SCALE)
             kiai_bar_h = int(22 * SCALE)
-    
+
             # Background panel
             cv2.rectangle(frame, (kiai_bar_x - 4, kiai_bar_y - int(24 * SCALE)),
-                          (kiai_bar_x + kiai_bar_w + 4, kiai_bar_y + kiai_bar_h + int(8 * SCALE)),
+                          (kiai_bar_x + kiai_bar_w + 4, kiai_bar_y + kiai_bar_h + int(14 * SCALE)),
                           (20, 20, 25), -1)
-    
+
             if kiai_mode:
                 # Kiai Mode ACTIVE: Show countdown
                 kiai_remaining = max(0, kiai_mode_end - current_time)
                 kiai_pct = kiai_remaining / KIAI_MODE_DURATION
-    
+
                 # Flashing "KIAI MODE ACTIVE" label
                 flash = int(current_time * 6) % 2
                 label_color = (0, 215, 255) if flash else (0, 100, 255)
                 cv2.putText(frame, f"KIAI MODE! {kiai_remaining:.1f}s", (kiai_bar_x, kiai_bar_y - int(6 * SCALE)),
                             cv2.FONT_HERSHEY_DUPLEX, 0.55 * SCALE, label_color, 2)
-    
+
                 # Countdown bar (draining)
                 cv2.rectangle(frame, (kiai_bar_x, kiai_bar_y), (kiai_bar_x + kiai_bar_w, kiai_bar_y + kiai_bar_h), (40, 40, 50), -1)
                 fill_w = int(kiai_bar_w * kiai_pct)
                 if fill_w > 0:
                     cv2.rectangle(frame, (kiai_bar_x, kiai_bar_y), (kiai_bar_x + fill_w, kiai_bar_y + kiai_bar_h), (0, 215, 255), -1)
                 cv2.rectangle(frame, (kiai_bar_x, kiai_bar_y), (kiai_bar_x + kiai_bar_w, kiai_bar_y + kiai_bar_h), (0, 180, 255), 2)
-    
-                # Mic volume indicator during kiai mode
-                mic_indicator_h = int(8 * SCALE)
-                mic_fill = int(min(1.0, mic_volume / (SHOUT_THRESHOLD * 1.5)) * kiai_bar_w)
-                mic_color = (0, 255, 100) if mic_volume > SHOUT_THRESHOLD else (80, 80, 80)
-                cv2.rectangle(frame, (kiai_bar_x, kiai_bar_y + kiai_bar_h + 2),
-                              (kiai_bar_x + mic_fill, kiai_bar_y + kiai_bar_h + mic_indicator_h + 2), mic_color, -1)
-                cv2.putText(frame, "SHOUT!", (kiai_bar_x + kiai_bar_w + int(8 * SCALE), kiai_bar_y + kiai_bar_h),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.4 * SCALE, mic_color, 1)
             else:
                 # Energy charging mode
                 energy_pct = kiai_energy / KIAI_MAX
                 cv2.putText(frame, "KIAI ENERGY", (kiai_bar_x, kiai_bar_y - int(6 * SCALE)),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.45 * SCALE, (180, 180, 180), 1)
-    
+
                 # Bar background
                 cv2.rectangle(frame, (kiai_bar_x, kiai_bar_y), (kiai_bar_x + kiai_bar_w, kiai_bar_y + kiai_bar_h), (40, 40, 50), -1)
-    
+
                 # Filled portion with color gradient (gray -> yellow -> red as it fills)
                 fill_w = int(kiai_bar_w * energy_pct)
                 if energy_pct < 0.5:
@@ -1348,11 +1363,38 @@ try:
                 if fill_w > 0:
                     cv2.rectangle(frame, (kiai_bar_x, kiai_bar_y), (kiai_bar_x + fill_w, kiai_bar_y + kiai_bar_h), bar_color, -1)
                 cv2.rectangle(frame, (kiai_bar_x, kiai_bar_y), (kiai_bar_x + kiai_bar_w, kiai_bar_y + kiai_bar_h), (100, 100, 110), 2)
-    
+
                 # Percentage text
                 cv2.putText(frame, f"{int(energy_pct * 100)}%", (kiai_bar_x + kiai_bar_w + int(8 * SCALE), kiai_bar_y + int(16 * SCALE)),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.45 * SCALE, (200, 200, 200), 1)
-    
+
+            # Live Acoustic / Shout Status Meter (Visible in both modes)
+            mic_indicator_h = int(6 * SCALE)
+            eff_thresh = getattr(clap_detector, "vocal_threshold", SHOUT_THRESHOLD) / max(0.2, getattr(clap_detector, "sensitivity", 1.0))
+            is_shout_active = clap_detector.has_recent_shout(window_sec=0.5) or (mic_volume > eff_thresh)
+            mic_fill = int(min(1.0, mic_volume / (eff_thresh * 1.5)) * kiai_bar_w)
+            mic_color = (0, 255, 100) if is_shout_active else ((0, 180, 255) if mic_volume > (eff_thresh * 0.4) else (70, 75, 85))
+
+            cv2.rectangle(frame, (kiai_bar_x, kiai_bar_y + kiai_bar_h + 3),
+                          (kiai_bar_x + kiai_bar_w, kiai_bar_y + kiai_bar_h + mic_indicator_h + 3), (35, 38, 48), -1)
+            if mic_fill > 0:
+                cv2.rectangle(frame, (kiai_bar_x, kiai_bar_y + kiai_bar_h + 3),
+                              (kiai_bar_x + mic_fill, kiai_bar_y + kiai_bar_h + mic_indicator_h + 3), mic_color, -1)
+
+            if AUDIO_AVAILABLE:
+                if is_shout_active:
+                    status_lbl = "KIAI READY!"
+                    lbl_c = (0, 215, 255)
+                else:
+                    status_lbl = "MIC ACTIVE [SHOUT]"
+                    lbl_c = (150, 160, 175)
+            else:
+                status_lbl = "MIC: OFF (VISION)"
+                lbl_c = (120, 120, 140)
+
+            cv2.putText(frame, status_lbl, (kiai_bar_x + kiai_bar_w + int(8 * SCALE), kiai_bar_y + kiai_bar_h + int(8 * SCALE)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.36 * SCALE, lbl_c, 1)
+
             # ---- KIAI MODE ACTIVATION FLASH ----
             if kiai_mode and (current_time - kiai_mode_activated_time) < 1.5:
                 flash_alpha = max(0, 1.0 - (current_time - kiai_mode_activated_time) / 1.5)
@@ -1580,6 +1622,17 @@ try:
             if GAME_STATE == "PLAYING":
                 shield_start_time = current_time
                 create_explosion(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2, (255, 255, 0), count=32, is_kiai=True)
+        elif key == ord('k'):  # Manual debug shortcut for Kiai Shout
+            if GAME_STATE == "PLAYING":
+                clap_detector.last_shout_time = current_time
+                mic_volume = SHOUT_THRESHOLD * 2.0
+                kiai_energy = min(KIAI_MAX, kiai_energy + 25)
+                if kiai_energy >= KIAI_MAX and not kiai_mode:
+                    kiai_mode = True
+                    kiai_mode_end = current_time + KIAI_MODE_DURATION
+                    kiai_mode_activated_time = current_time
+                    kiai_energy = 0
+                print("[Debug] Manual KIAI shout triggered via 'K' key!")
     
 finally:
     try:

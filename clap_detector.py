@@ -39,7 +39,8 @@ class ClapDetector:
 
         # Separate Shout (Kiai) Tracker
         self.vocal_rms = 0.0
-        self.vocal_threshold = 0.080
+        self.vocal_threshold = 0.038  # Calibrated for natural shout at full-body webcam distance
+        self.last_shout_time = 0.0
 
         # Historical wrist distance for convergence estimation
         self.prev_wrist_dist = None
@@ -58,8 +59,11 @@ class ClapDetector:
         if audio_data is None or len(audio_data) == 0:
             return
 
-        # Flatten mono channel
-        samples = audio_data.flatten()
+        # Handle stereo or mono input robustly (downmix stereo channels if present)
+        if hasattr(audio_data, "ndim") and audio_data.ndim > 1 and audio_data.shape[1] > 1:
+            samples = np.mean(audio_data, axis=1)
+        else:
+            samples = audio_data.flatten()
         
         # 1. Peak Amplitude
         peak = float(np.max(np.abs(samples)))
@@ -69,8 +73,16 @@ class ClapDetector:
         rms = float(np.sqrt(np.mean(samples ** 2)))
         self.short_rms = rms
 
-        # 3. Separate Vocal Tracking (Sustained shout has high smoothed RMS)
-        self.vocal_rms = self.vocal_rms * 0.70 + rms * 0.30
+        # 3. Asymmetric Vocal Envelope Tracking (fast attack ~20ms, sustained decay ~350ms)
+        if rms > self.vocal_rms:
+            self.vocal_rms = self.vocal_rms * 0.40 + rms * 0.60
+        else:
+            self.vocal_rms = self.vocal_rms * 0.94 + rms * 0.06
+
+        # Kiai shout latch: record timestamp when vocal energy exceeds threshold
+        effective_shout_thresh = self.vocal_threshold / max(0.2, self.sensitivity)
+        if self.vocal_rms >= effective_shout_thresh:
+            self.last_shout_time = time.time()
 
         # 4. Adaptive Noise Floor (slow upward, fast downward tracking)
         if rms > self.noise_floor:
@@ -199,6 +211,9 @@ class ClapDetector:
         else:
             self.last_result_text = "READY"
 
+        effective_shout_thresh = self.vocal_threshold / max(0.2, self.sensitivity)
+        is_shout = (self.vocal_rms >= effective_shout_thresh) or ((now - self.last_shout_time) <= 0.6)
+
         debug_info = {
             "mic_available": self.mic_available,
             "short_rms": self.short_rms,
@@ -207,6 +222,8 @@ class ClapDetector:
             "crest_factor": self.crest_factor,
             "energy_onset": self.energy_onset,
             "vocal_rms": self.vocal_rms,
+            "vocal_threshold": effective_shout_thresh,
+            "is_shouting": is_shout,
             "wrist_dist_px": wrist_dist_px,
             "body_relative_dist": body_relative_dist,
             "is_converging": is_converging,
@@ -220,13 +237,27 @@ class ClapDetector:
         return triggered, final_confidence, debug_info
 
     def is_shouting(self):
-        """Returns True if sustained vocal energy exceeds Kiai shouting threshold."""
-        return self.vocal_rms >= (self.vocal_threshold / max(0.2, self.sensitivity))
+        """Returns True if current vocal energy exceeds Kiai shouting threshold."""
+        thresh = self.vocal_threshold / max(0.2, self.sensitivity)
+        return self.vocal_rms >= thresh
+
+    def has_recent_shout(self, window_sec=0.6):
+        """Returns True if user shouted within recent time window (latch for punch impact)."""
+        now = time.time()
+        if self.is_shouting():
+            self.last_shout_time = now
+            return True
+        return (now - self.last_shout_time) <= window_sec
+
+    def consume_shout(self):
+        """Consumes the recent shout latch so one shout triggers one punch impact."""
+        self.last_shout_time = 0.0
 
     def reset(self):
         """Reset state when starting or restarting a match."""
         self.last_trigger_time = 0.0
         self.last_audio_spike_time = 0.0
+        self.last_shout_time = 0.0
         self.last_result_text = "READY"
         self.prev_wrist_dist = None
         self.prev_wrist_time = None
@@ -235,7 +266,7 @@ class ClapDetector:
     def draw_diagnostic_hud(self, frame, x=20, y=140, scale=1.0):
         """
         Renders a semi-transparent diagnostic HUD panel in OpenCV BGR frame.
-        Shows live RMS, Noise Floor, Peak, Crest Factor, Pose Distance, and Status.
+        Shows live RMS, Noise Floor, Peak, Crest Factor, Vocal Kiai, Pose Distance, and Status.
         """
         import cv2
 
@@ -244,7 +275,7 @@ class ClapDetector:
             return
 
         w = int(280 * scale)
-        h = int(185 * scale)
+        h = int(212 * scale)
         
         # Translucent background overlay
         overlay = frame.copy()
@@ -253,15 +284,19 @@ class ClapDetector:
         cv2.rectangle(frame, (x, y), (x + w, y + h), (60, 80, 110), 1)
 
         # Header
-        cv2.putText(frame, "ACOUSTIC CLAP DIAGNOSTIC", (x + 10, y + 20),
+        cv2.putText(frame, "ACOUSTIC & KIAI DIAGNOSTIC", (x + 10, y + 20),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.44 * scale, (255, 215, 0), 1)
 
         # Status Line
         status_col = (0, 255, 0) if d.get("result_text", "").startswith("CLAP") else (
             (0, 200, 255) if d.get("result_text") == "READY" else (180, 180, 180)
         )
-        cv2.putText(frame, f"STATUS: {d.get('result_text', 'N/A')}", (x + 10, y + 42),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.40 * scale, status_col, 1)
+        status_str = d.get('result_text', 'N/A')
+        if d.get("is_shouting", False):
+            status_str += " | KIAI ACTIVE!"
+            status_col = (0, 215, 255)
+        cv2.putText(frame, f"STATUS: {status_str}", (x + 10, y + 42),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.38 * scale, status_col, 1)
 
         # Level Bars
         # 1. RMS & Noise Floor
@@ -278,32 +313,44 @@ class ClapDetector:
         # Noise floor marker
         cv2.line(frame, (bar_x + int(bar_w * nf), y + 52), (bar_x + int(bar_w * nf), y + 68), (0, 120, 255), 2)
 
-        # 2. Crest Factor & Peak
+        # 2. Vocal / Kiai Shout Meter
+        voc_rms = min(1.0, d.get("vocal_rms", 0.0) * 12.0)
+        voc_th = min(1.0, d.get("vocal_threshold", 0.04) * 12.0)
+        is_shout = d.get("is_shouting", False)
+        shout_col = (0, 215, 255) if is_shout else (120, 180, 255)
+        cv2.putText(frame, "Vocal / Kiai:", (x + 10, y + 86),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.38 * scale, (200, 200, 200), 1)
+        cv2.rectangle(frame, (bar_x, y + 76), (bar_x + bar_w, y + 88), (40, 45, 55), -1)
+        cv2.rectangle(frame, (bar_x, y + 76), (bar_x + int(bar_w * voc_rms), y + 88), shout_col, -1)
+        # Threshold marker
+        cv2.line(frame, (bar_x + int(bar_w * voc_th), y + 74), (bar_x + int(bar_w * voc_th), y + 90), (0, 255, 100), 2)
+
+        # 3. Crest Factor & Peak
         cf = d.get("crest_factor", 1.0)
         peak = d.get("peak_amp", 0.0)
-        cv2.putText(frame, f"Crest/Peak: {cf:.1f} / {peak:.2f}", (x + 10, y + 88),
+        cv2.putText(frame, f"Crest/Peak: {cf:.1f} / {peak:.2f}", (x + 10, y + 108),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.38 * scale, (200, 200, 200), 1)
 
-        # 3. Energy Onset
+        # 4. Energy Onset
         onset = d.get("energy_onset", 0.0)
-        cv2.putText(frame, f"Onset Ratio: {onset:.1f}x", (x + 10, y + 110),
+        cv2.putText(frame, f"Onset Ratio: {onset:.1f}x", (x + 10, y + 130),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.38 * scale, (200, 200, 200), 1)
 
-        # 4. Wrist Dist (Body Rel)
+        # 5. Wrist Dist (Body Rel)
         brd = d.get("body_relative_dist", 999.0)
         dist_str = f"{brd:.2f} body-w" if brd < 100.0 else "NO POSE"
-        cv2.putText(frame, f"Wrist Dist: {dist_str}", (x + 10, y + 132),
+        cv2.putText(frame, f"Wrist Dist: {dist_str}", (x + 10, y + 152),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.38 * scale, (200, 200, 200), 1)
 
-        # 5. Cooldown Bar
+        # 6. Cooldown Bar
         cd = d.get("cooldown_remaining", 0.0)
         cd_ratio = min(1.0, cd / max(0.1, self.cooldown_sec))
-        cv2.putText(frame, "Cooldown:", (x + 10, y + 154),
+        cv2.putText(frame, "Cooldown:", (x + 10, y + 174),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.38 * scale, (200, 200, 200), 1)
-        cv2.rectangle(frame, (bar_x, y + 144), (bar_x + bar_w, y + 156), (40, 45, 55), -1)
+        cv2.rectangle(frame, (bar_x, y + 164), (bar_x + bar_w, y + 176), (40, 45, 55), -1)
         cd_col = (0, 80, 220) if cd_ratio > 0 else (0, 200, 0)
-        cv2.rectangle(frame, (bar_x, y + 144), (bar_x + int(bar_w * cd_ratio), y + 156), cd_col, -1)
+        cv2.rectangle(frame, (bar_x, y + 164), (bar_x + int(bar_w * cd_ratio), y + 176), cd_col, -1)
 
         # Hotkey guide
-        cv2.putText(frame, "[TAB] Toggle Diag | [S] Test Shield", (x + 10, y + 175),
+        cv2.putText(frame, "[TAB] Toggle | [S] Test Shield | [K] Test Kiai", (x + 10, y + 198),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.34 * scale, (150, 160, 180), 1)

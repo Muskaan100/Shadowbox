@@ -100,3 +100,66 @@ def test_not_playing_state_ignores_claps():
     # In WAITING or PAUSED state (is_playing=False)
     triggered, _, _ = detector.evaluate_clap(is_playing=False)
     assert triggered is False
+
+def test_kiai_shout_detection():
+    detector = ClapDetector(cooldown_sec=1.5)
+    # Ambient baseline
+    for _ in range(5):
+        detector.process_audio_block(generate_silence())
+    assert not detector.is_shouting()
+    assert not detector.has_recent_shout(0.6)
+
+    # Sustained shout (high RMS, low crest factor)
+    shout = generate_speech(amp=0.15)
+    for _ in range(8):
+        detector.process_audio_block(shout)
+    
+    assert detector.is_shouting()
+    assert detector.has_recent_shout(0.6)
+
+    # Consume shout latch
+    detector.consume_shout()
+    # If vocal_rms is currently above threshold, is_shouting is still True but consume clears the historical latch
+    assert detector.last_shout_time == 0.0
+
+def test_kiai_shout_latch_window():
+    detector = ClapDetector(cooldown_sec=1.5)
+    shout = generate_speech(amp=0.18)
+    for _ in range(10):
+        detector.process_audio_block(shout)
+    
+    assert detector.has_recent_shout(0.6)
+    # Now feed silence: vocal_rms will decay, but recent shout remains True within window
+    for _ in range(5):
+        detector.process_audio_block(generate_silence())
+    
+    # Should still be within 0.6s window
+    assert detector.has_recent_shout(0.6)
+
+def test_kiai_sensitivity_scaling():
+    det_low = ClapDetector()
+    det_low.sensitivity = 0.5
+    det_high = ClapDetector()
+    det_high.sensitivity = 1.5
+
+    # Medium vocal energy (amp=0.06 -> RMS ~0.04)
+    med_speech = generate_speech(amp=0.06)
+    for _ in range(10):
+        det_low.process_audio_block(med_speech)
+        det_high.process_audio_block(med_speech)
+    
+    # High sensitivity should trigger easily; low sensitivity should require louder shout
+    assert det_high.is_shouting()
+    assert not det_low.is_shouting()
+
+def test_stereo_input_downmixing():
+    detector = ClapDetector()
+    # Create stereo block shape (512, 2)
+    stereo_silence = np.zeros((512, 2), dtype=np.float32)
+    detector.process_audio_block(stereo_silence)
+    assert detector.short_rms == 0.0
+
+    stereo_shout = np.hstack([generate_speech(amp=0.15), generate_speech(amp=0.15)])
+    for _ in range(8):
+        detector.process_audio_block(stereo_shout)
+    assert detector.is_shouting()

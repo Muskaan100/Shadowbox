@@ -463,7 +463,7 @@ class ArcadeLauncher:
         dim.fill((5, 8, 12, 225))
         self.screen.blit(dim, (0, 0))
 
-        mw, mh = 720, 610
+        mw, mh = 720, 650
         mx = (SCREEN_W - mw) // 2
         my = (SCREEN_H - mh) // 2
         modal_rect = pygame.Rect(mx, my, mw, mh)
@@ -554,7 +554,7 @@ class ArcadeLauncher:
         self.screen.blit(self.font_ui.render("+", True, (255, 255, 255)), (r_m_plus.centerx - 6, r_m_plus.centery - 12))
 
         # 6. Audio: SFX Volume
-        sy += 48
+        sy += 46
         s_vol = int(self.music.sfx_volume * 100)
         lbl4 = self.font_ui.render(f"SFX Volume: {s_vol}%", True, (255, 255, 255))
         self.screen.blit(lbl4, (mx + 45, sy))
@@ -566,7 +566,23 @@ class ArcadeLauncher:
         self.screen.blit(self.font_ui.render("-", True, (255, 255, 255)), (r_s_minus.centerx - 5, r_s_minus.centery - 12))
         self.screen.blit(self.font_ui.render("+", True, (255, 255, 255)), (r_s_plus.centerx - 6, r_s_plus.centery - 12))
 
-        # 7. Master Mute & Fullscreen Toggles
+        # 7. Kiai Microphone Sensitivity
+        sy += 46
+        m_sens = prefs.get("mic_sensitivity", 1.0)
+        lbl_mic = self.font_ui.render("Kiai Mic Sensitivity:", True, (255, 255, 255))
+        self.screen.blit(lbl_mic, (mx + 45, sy))
+
+        mic_opts = [(0.7, "Low (0.7x)"), (1.0, "Norm (1.0x)"), (1.4, "High (1.4x)")]
+        ox = mx + 265
+        for s_val, s_lbl in mic_opts:
+            r = pygame.Rect(ox, sy - 4, 120, 30)
+            sel = abs(m_sens - s_val) < 0.15
+            pygame.draw.rect(self.screen, (0, 200, 160) if sel else (35, 40, 55), r, border_radius=6)
+            t = self.font_small.render(s_lbl, True, (20, 24, 30) if sel else (180, 190, 200))
+            self.screen.blit(t, (r.centerx - t.get_width()//2, r.centery - t.get_height()//2))
+            ox += 128
+
+        # 8. Master Mute & Fullscreen Toggles
         sy += 48
         mute_t = "MUTED" if self.music.is_muted else "AUDIO ACTIVE"
         mute_col = (255, 75, 75) if self.music.is_muted else (75, 220, 100)
@@ -589,7 +605,7 @@ class ArcadeLauncher:
         self.screen.blit(c_t, (r_close.centerx - c_t.get_width()//2, r_close.centery - c_t.get_height()//2))
 
     def handle_settings_modal_click(self, pos):
-        mw, mh = 720, 610
+        mw, mh = 720, 650
         mx = (SCREEN_W - mw) // 2
         my = (SCREEN_H - mh) // 2
         active_p = self.profile_mgr.get_active_player()
@@ -678,8 +694,20 @@ class ArcadeLauncher:
             self.profile_mgr.update_preferences(pid, {"sfx_volume": new_v})
             return
 
-        # 7. Mute toggle
-        sy5 = sy4 + 48
+        # 7. Mic Sensitivity
+        sy_mic = sy4 + 46
+        mic_opts = [0.7, 1.0, 1.4]
+        ox = mx + 265
+        for s_val in mic_opts:
+            r = pygame.Rect(ox, sy_mic - 4, 120, 30)
+            if r.collidepoint(pos):
+                self.ui_audio.play("toggle")
+                self.profile_mgr.update_preferences(pid, {"mic_sensitivity": s_val})
+                return
+            ox += 128
+
+        # 8. Mute toggle
+        sy5 = sy_mic + 46
         r_mute = pygame.Rect(mx + 45, sy5, 220, 34)
         if r_mute.collidepoint(pos):
             self.ui_audio.play("toggle")

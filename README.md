@@ -49,7 +49,7 @@ A multimodal kinetic combat game fusing skeletal pose tracking, biomechanical pu
   - **F3 Diagnostics HUD (`[D]` / `[F3]`):** Real-time telemetry displaying skeletal vectors, punch states, tracking quality %, and frame age.
 - **Multimodal Transient Clap Forcefield:** Real-time audio DSP analyzes peak amplitude, crest factor, and energy onset combined with body-relative wrist convergence to trigger the **Sonic Shield** (TAB key displays on-screen acoustic diagnostic HUD).
 - **Laser Deflection & Parry Reward:** Ducking under lasers dodges the hazard; deflecting the laser with an active Sonic Shield rewards **+75 parry points** and sub-bass shockwaves!
-- **Acoustic "KIAI" Battle Cry:** Shouting into your microphone at maximum energy triggers **5x Critical Strikes** and golden explosions.
+- **Acoustic "KIAI" Battle Cry:** Shouting into your microphone on punch impact triggers **5x Critical Strikes**, golden explosions, and heavy boss damage. Punches and battle cries charge your 10-second **Kiai Overdrive** bonus mode! (Acoustic diagnostics on `[TAB]`, manual test on `[K]`, and audio audit via `python scripts/check_mic.py`).
 - **Customizable Gloves & Skins:** Visual glove scaling decoupled from collision hitboxes, featuring 4 unlockable skins: *Classic Red*, *Electric Blue*, *Neon Purple*, and *Golden Champion*.
 - **Mecha Mini-Boss Encounters:** Face off against *MECHA-BRUTE* and *CYBER-TITAN* with segmented floating HP bars, rotating armor shields, and dynamic impact recoil.
 
@@ -161,7 +161,7 @@ pip install opencv-python mediapipe numpy pygame sounddevice pytest pillow
   ```bash
   python 02_shadow_boxer_game.py [--player-id <id>]
   ```
-  *(Press `TAB` for Acoustic Diagnostic HUD, `S` to test shield, `R` to restart, `Q` to quit)*
+  *(Press `TAB` for Acoustic Diagnostic HUD, `S` to test shield, `K` to test Kiai shout, `R` to restart, `Q` to quit)*
 
 * **Or Launch Fruit Ninja directly:**
   ```bash
@@ -172,7 +172,7 @@ pip install opencv-python mediapipe numpy pygame sounddevice pytest pillow
 
 ## 🧪 Automated Testing Suite
 
-All 64 unit and integration tests run in $< 9$ seconds across 10 test modules:
+All 74 unit and integration tests run in $< 11$ seconds across 10 test modules:
 
 ```bash
 pytest tests/ -v
@@ -184,7 +184,7 @@ Tests cover:
 - **Hand Tracker (`test_hand_tracker.py`):** Laser sword active slices, blade trail tip tracking, OpenCV rendering.
 - **Arcade Polish & Mechanics (`test_arcade_polish.py`):** Heart fruit mechanics, profile logging, clap convergence, laser parries.
 - **Audio Engines (`test_audio_engine.py`, `test_music_manager.py`):** Dynamic mixing, volume sync, mute toggles, procedural soundtracks.
-- **Multimodal Claps (`test_clap_detector.py`):** Dynamic thresholding, speech rejection, refractory periods.
+- **Multimodal Claps & Kiai DSP (`test_clap_detector.py`):** Dynamic thresholding, speech rejection, refractory periods, acoustic shout tracking, punch impact latch windows, sensitivity scaling, and stereo downmixing.
 - **Fruit Physics (`test_fruit_physics.py`):** Swept slice collision, parabolic motion, sliced halves, wave spawner.
 - **Player Profiles (`test_player_profiles.py`):** Atomic persistence, per-player stats, legacy migrations.
 - **Headless Lifecycles (`test_game_loop.py`, `test_launcher.py`):** State transitions and clean teardowns.
