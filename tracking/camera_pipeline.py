@@ -11,10 +11,14 @@ High-Frequency Dedicated Acquisition Loop:
 """
 
 import cv2
+import sys
+import os
 import time
 import threading
 import numpy as np
 from typing import Tuple, Optional, Dict, Any
+
+_CAMERA_OPEN_LOCK = threading.Lock()
 
 
 class CameraPipeline:
@@ -48,7 +52,7 @@ class CameraPipeline:
         self._consecutive_failures: int = 0
 
         # Headless flag
-        self.is_headless = False
+        self.is_headless = os.environ.get("SDL_VIDEODRIVER") == "dummy" or os.environ.get("CI") == "true" or os.environ.get("SHADOWBOX_HEADLESS") == "1"
 
     def start(self) -> bool:
         """Initializes camera and launches background acquisition worker."""
@@ -62,21 +66,41 @@ class CameraPipeline:
         return True
 
     def _open_camera(self):
-        try:
-            self.cap = cv2.VideoCapture(self.camera_index)
-            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.target_w)
-            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.target_h)
-            self.cap.set(cv2.CAP_PROP_FPS, self.target_fps)
-            if not self.cap.isOpened():
-                print(f"[CameraPipeline Warning] Could not open camera {self.camera_index}. Entering headless fallback.")
+        if self.is_headless:
+            return
+        with _CAMERA_OPEN_LOCK:
+            try:
+                if sys.platform.startswith("win"):
+                    self.cap = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
+                    if not self.cap or not self.cap.isOpened():
+                        self.cap = cv2.VideoCapture(self.camera_index)
+                else:
+                    self.cap = cv2.VideoCapture(self.camera_index)
+
+                if self.cap and self.cap.isOpened():
+                    self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.target_w)
+                    self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.target_h)
+                    self.cap.set(cv2.CAP_PROP_FPS, self.target_fps)
+                    # Quick validation frame read
+                    ret, test_frame = self.cap.read()
+                    if ret and test_frame is not None:
+                        self.is_headless = False
+                        print(f"[CameraPipeline] Hardware camera opened at index {self.camera_index} ({self.target_w}x{self.target_h}).")
+                    else:
+                        print(f"[CameraPipeline Warning] Camera opened but delivered empty frame. Headless fallback active.")
+                        self.is_headless = True
+                        try:
+                            self.cap.release()
+                        except Exception:
+                            pass
+                        self.cap = None
+                else:
+                    print(f"[CameraPipeline Warning] Could not open camera {self.camera_index}. Entering headless fallback.")
+                    self.is_headless = True
+            except Exception as e:
+                print(f"[CameraPipeline Warning] Hardware capture exception: {e}. Headless fallback active.")
                 self.is_headless = True
-            else:
-                self.is_headless = False
-                print(f"[CameraPipeline] Hardware camera opened at index {self.camera_index} ({self.target_w}x{self.target_h}).")
-        except Exception as e:
-            print(f"[CameraPipeline Warning] Hardware capture exception: {e}. Headless fallback active.")
-            self.is_headless = True
-            self.cap = None
+                self.cap = None
 
     def _capture_worker(self):
         """Dedicated background capture thread."""

@@ -199,6 +199,8 @@ class LaserSword:
         self.base_blade_length = float(base_blade_length)
         self.blade_length = float(base_blade_length)
         self.blade_width = float(blade_width)
+        self.length_multiplier = 1.0
+        self.width_multiplier = 1.0
         
         # Tracking State & Presence
         self.is_present = False
@@ -264,6 +266,11 @@ class LaserSword:
         # Audio Trigger Flags
         self.just_ignited = False
         self.just_retracted = False
+
+    def set_size_modifiers(self, length_mult=1.0, width_mult=1.0):
+        """Adjusts the physical length and thickness of the plasma blade."""
+        self.length_multiplier = max(0.5, min(2.5, float(length_mult)))
+        self.width_multiplier = max(0.5, min(2.5, float(width_mult)))
 
     @property
     def velocity_vector(self):
@@ -391,7 +398,7 @@ class LaserSword:
         # Blade Tip (extends outward from fist)
         # Dynamic distance scaling gives balanced blade length across camera depths
         scale_factor = (self.palm_scale / 65.0) ** 0.35
-        scaled_blade_len = self.base_blade_length * scale_factor
+        scaled_blade_len = self.base_blade_length * scale_factor * self.length_multiplier
         current_len = scaled_blade_len * self.extension_pct
         self.blade_tip = (
             self.blade_root[0] + ux * current_len,
@@ -514,7 +521,7 @@ class LaserSword:
             return False, None
 
         fx, fy = fruit_pos
-        effective_radius = fruit_radius + (self.blade_width * 0.5) + self.collision_margin
+        effective_radius = fruit_radius + (self.blade_width * self.width_multiplier * 0.5) + self.collision_margin
 
         if self.prev_root is None or self.prev_tip is None:
             # Fallback to current blade segment
@@ -633,7 +640,7 @@ class LaserSword:
 
             # Dynamic velocity glow boost
             vel_boost = min(1.35, 1.0 + (self.velocity / 800.0) * 0.35)
-            b_width = max(14, int(self.blade_width * (self.palm_scale / 65.0) ** 0.30))
+            b_width = max(14, int(self.blade_width * self.width_multiplier * (self.palm_scale / 65.0) ** 0.30))
 
             # Layer A: Soft Translucent Outer Aura
             aura_width = int(b_width * 1.8 * vel_boost)

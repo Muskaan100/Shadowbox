@@ -164,7 +164,12 @@ class HandTracker:
         self.prev_process_time = time.time()
         self.hands_detected_count = 0
         self.auto_grip = False
-        self.hand_mode = "BOTH"  # "BOTH", "RIGHT_ONLY", "LEFT_ONLY", "AUTO"
+        self.hand_mode = "RIGHT_ONLY"  # "RIGHT_ONLY", "LEFT_ONLY", "SINGLE_AUTO", "BOTH"
+
+    def set_sword_size(self, length_mult=1.0, width_mult=1.0):
+        """Sets size modifiers on both laser swords."""
+        self.left_sword.set_size_modifiers(length_mult, width_mult)
+        self.right_sword.set_size_modifiers(length_mult, width_mult)
 
     def get_swords(self):
         """Returns list of both LaserSword instances."""
@@ -178,6 +183,8 @@ class HandTracker:
         """
         Receives flipped BGR frame from webcam.
         Runs fast CPU inference and updates tracked hands and laser swords.
+        Supports single-hand enforcement ("RIGHT_ONLY", "LEFT_ONLY", "SINGLE_AUTO")
+        and dual-wield ("BOTH").
         """
         now = time.time()
         if dt is None:
@@ -209,9 +216,7 @@ class HandTracker:
         right_found = False
         self.hands_detected_count = 0
 
-        # Hand filter flags
-        allow_left = (self.hand_mode in ["BOTH", "LEFT_ONLY", "AUTO"])
-        allow_right = (self.hand_mode in ["BOTH", "RIGHT_ONLY", "AUTO"])
+        is_single_hand = self.hand_mode in ["RIGHT_ONLY", "LEFT_ONLY", "SINGLE_AUTO", "AUTO"]
 
         if result and result.hand_landmarks:
             self.hands_detected_count = len(result.hand_landmarks)
@@ -227,18 +232,39 @@ class HandTracker:
                     label = "Left" if cat.category_name == "Right" else "Right"
                     score = cat.score
 
-                if label == "Left" and not left_found and allow_left:
-                    self.left_hand.update(landmarks, screen_w, screen_h, score, now, dt=dt, auto_grip=self.auto_grip)
-                    left_found = True
-                elif label == "Right" and not right_found and allow_right:
+                if self.hand_mode == "RIGHT_ONLY":
+                    # Strictly single-hand right: always bind primary hand to right sword and break
                     self.right_hand.update(landmarks, screen_w, screen_h, score, now, dt=dt, auto_grip=self.auto_grip)
                     right_found = True
-                elif not left_found and allow_left:
+                    break
+                elif self.hand_mode == "LEFT_ONLY":
+                    # Strictly single-hand left: always bind primary hand to left sword and break
                     self.left_hand.update(landmarks, screen_w, screen_h, score, now, dt=dt, auto_grip=self.auto_grip)
                     left_found = True
-                elif not right_found and allow_right:
-                    self.right_hand.update(landmarks, screen_w, screen_h, score, now, dt=dt, auto_grip=self.auto_grip)
-                    right_found = True
+                    break
+                elif is_single_hand:
+                    # Single-hand auto: allow only one hand at a time
+                    if label == "Left":
+                        self.left_hand.update(landmarks, screen_w, screen_h, score, now, dt=dt, auto_grip=self.auto_grip)
+                        left_found = True
+                    else:
+                        self.right_hand.update(landmarks, screen_w, screen_h, score, now, dt=dt, auto_grip=self.auto_grip)
+                        right_found = True
+                    break
+                else:
+                    # BOTH (Dual-wield mode)
+                    if label == "Left" and not left_found:
+                        self.left_hand.update(landmarks, screen_w, screen_h, score, now, dt=dt, auto_grip=self.auto_grip)
+                        left_found = True
+                    elif label == "Right" and not right_found:
+                        self.right_hand.update(landmarks, screen_w, screen_h, score, now, dt=dt, auto_grip=self.auto_grip)
+                        right_found = True
+                    elif not left_found:
+                        self.left_hand.update(landmarks, screen_w, screen_h, score, now, dt=dt, auto_grip=self.auto_grip)
+                        left_found = True
+                    elif not right_found:
+                        self.right_hand.update(landmarks, screen_w, screen_h, score, now, dt=dt, auto_grip=self.auto_grip)
+                        right_found = True
 
         if not left_found:
             self.left_hand.mark_absent(now, dt=dt)

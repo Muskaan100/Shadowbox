@@ -128,3 +128,75 @@ def test_draw_blade_effects_renders_cleanly():
 
     tracker.draw_blade_effects(frame)
     tracker.close()
+
+def test_set_sword_size():
+    tracker = HandTracker()
+    tracker.set_sword_size(1.5, 1.2)
+    assert tracker.left_sword.length_multiplier == 1.5
+    assert tracker.left_sword.width_multiplier == 1.2
+    assert tracker.right_sword.length_multiplier == 1.5
+    assert tracker.right_sword.width_multiplier == 1.2
+    tracker.close()
+
+def test_single_hand_mode_right_only():
+    tracker = HandTracker()
+    tracker.hand_mode = "RIGHT_ONLY"
+
+    class DummyLM:
+        def __init__(self, x, y):
+            self.x = x
+            self.y = y
+
+    landmarks = [DummyLM(0.5, 0.5) for _ in range(21)]
+    landmarks[0] = DummyLM(0.5, 0.7)
+
+    # Mock detection result with 2 hands
+    class MockCategory:
+        def __init__(self, name, score=0.95):
+            self.category_name = name
+            self.score = score
+
+    class MockResult:
+        def __init__(self):
+            self.hand_landmarks = [landmarks, landmarks]
+            # MediaPipe category_name "Left" means user's Right hand
+            self.handedness = [[MockCategory("Left")], [MockCategory("Right")]]
+
+    tracker.detector.detect = lambda img: MockResult()
+    dummy_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    left, right = tracker.process_frame(dummy_frame, 640, 480)
+
+    assert right.is_present
+    assert not left.is_present
+    assert len(tracker.get_active_swords()) <= 1
+    tracker.close()
+
+def test_single_hand_mode_left_only():
+    tracker = HandTracker()
+    tracker.hand_mode = "LEFT_ONLY"
+
+    class DummyLM:
+        def __init__(self, x, y):
+            self.x = x
+            self.y = y
+
+    landmarks = [DummyLM(0.5, 0.5) for _ in range(21)]
+    landmarks[0] = DummyLM(0.5, 0.7)
+
+    class MockCategory:
+        def __init__(self, name, score=0.95):
+            self.category_name = name
+            self.score = score
+
+    class MockResult:
+        def __init__(self):
+            self.hand_landmarks = [landmarks, landmarks]
+            self.handedness = [[MockCategory("Right")], [MockCategory("Left")]]
+
+    tracker.detector.detect = lambda img: MockResult()
+    dummy_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    left, right = tracker.process_frame(dummy_frame, 640, 480)
+
+    assert left.is_present
+    assert not right.is_present
+    tracker.close()

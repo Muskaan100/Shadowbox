@@ -36,7 +36,7 @@
         "classic_high_score": 156,
         "zen_high_score": 0,
         "arcade_high_score": 37,
-        "total_sliced": 156,
+        "total_sliced": 169,
         "max_combo": 4,
         "bombs_hit": 55,
         "total_matches": 15
@@ -58,8 +58,11 @@
         "camera_blend": 0.35,
         "fullscreen": false,
         "completed_tutorial": true,
-        "difficulty": "EASY",
-        "auto_grip": true
+        "difficulty": "CLASSIC",
+        "auto_grip": true,
+        "sword_size_preset": "SHORT",
+        "sword_length_mult": 0.75,
+        "hand_mode": "SINGLE_AUTO"
       },
       "shadow_boxing": {
         "high_score": 765,
@@ -76,10 +79,10 @@
         "classic_high_score": 156,
         "zen_high_score": 0,
         "arcade_high_score": 0,
-        "total_sliced": 28,
+        "total_sliced": 40,
         "max_combo": 3,
-        "bombs_hit": 18,
-        "total_matches": 18
+        "bombs_hit": 25,
+        "total_matches": 25
       }
     }
   }

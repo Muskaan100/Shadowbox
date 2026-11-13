@@ -65,6 +65,18 @@ SPLASH_DECAL_MAP = {
     "heart_fruit": "splash_red"
 }
 
+# Laser Sword Sizing Presets (length_multiplier, width_multiplier)
+SWORD_SIZES = ["SHORT", "STANDARD", "LONG", "TITAN"]
+SWORD_SIZE_CONFIGS = {
+    "SHORT": (0.75, 0.85),
+    "STANDARD": (1.0, 1.0),
+    "LONG": (1.30, 1.15),
+    "TITAN": (1.60, 1.30),
+}
+
+# Hand Tracking Modes (Single-hand vs Dual-wield)
+HAND_MODES = ["RIGHT_ONLY", "LEFT_ONLY", "SINGLE_AUTO", "BOTH"]
+
 # -----------------------------------------------------------------------------
 # 2. HIGH SCORE MANAGER
 # -----------------------------------------------------------------------------
@@ -257,8 +269,21 @@ class FruitNinjaGame:
         # Fruit Ninja 2.0 Laser Sword Settings & Preferences
         self.difficulty = self.player_prefs.get("difficulty", "EASY")
         self.auto_grip = self.player_prefs.get("auto_grip", False)
-        self.hand_mode = self.player_prefs.get("hand_mode", "BOTH")
-        self.sword_length_mult = self.player_prefs.get("sword_length_mult", 1.0)
+        self.hand_mode = self.player_prefs.get("hand_mode", "RIGHT_ONLY")
+        if self.hand_mode not in HAND_MODES:
+            self.hand_mode = "RIGHT_ONLY"
+
+        self.sword_size_preset = self.player_prefs.get("sword_size_preset", "STANDARD")
+        if self.sword_size_preset not in SWORD_SIZES:
+            self.sword_size_preset = "STANDARD"
+        s_len, s_wid = SWORD_SIZE_CONFIGS[self.sword_size_preset]
+        self.sword_length_mult = s_len
+        self.sword_width_mult = s_wid
+
+        if self.tracker:
+            self.tracker.hand_mode = self.hand_mode
+            self.tracker.set_sword_size(self.sword_length_mult, self.sword_width_mult)
+
         self.completed_tutorial = self.player_prefs.get("completed_tutorial", False)
 
         # High Scores (from active player profile with fallback to legacy file)
@@ -305,14 +330,24 @@ class FruitNinjaGame:
         self.card_zen_rect = pygame.Rect(480, card_y, card_w, card_h)
         self.card_arcade_rect = pygame.Rect(860, card_y, card_w, card_h)
 
-        btn_y = 590
-        self.btn_diff_rect = pygame.Rect(100, btn_y, 240, 46)
-        self.btn_autogrip_rect = pygame.Rect(365, btn_y, 235, 46)
-        self.btn_tutorial_rect = pygame.Rect(625, btn_y, 255, 46)
-        self.btn_quit_rect = pygame.Rect(905, btn_y, 275, 46)
+        btn_y = 595
+        btn_h = 44
+        self.btn_diff_rect = pygame.Rect(55, btn_y, 185, btn_h)
+        self.btn_sword_size_rect = pygame.Rect(255, btn_y, 185, btn_h)
+        self.btn_hand_mode_rect = pygame.Rect(455, btn_y, 180, btn_h)
+        self.btn_autogrip_rect = pygame.Rect(650, btn_y, 180, btn_h)
+        self.btn_tutorial_rect = pygame.Rect(845, btn_y, 205, btn_h)
+        self.btn_quit_rect = pygame.Rect(1065, btn_y, 160, btn_h)
 
         # Skip button in tutorial
         self.btn_skip_tutorial_rect = pygame.Rect(SCREEN_W - 220, SCREEN_H - 65, 180, 42)
+
+        # Interactive Hand Preference Selection Rects in Tutorial
+        tut_opt_y = 290
+        tut_opt_w = 215
+        self.tut_hand_right_rect = pygame.Rect(self.screen_w // 2 - 340, tut_opt_y, tut_opt_w, 44)
+        self.tut_hand_left_rect = pygame.Rect(self.screen_w // 2 - 105, tut_opt_y, tut_opt_w, 44)
+        self.tut_hand_dual_rect = pygame.Rect(self.screen_w // 2 + 130, tut_opt_y, tut_opt_w, 44)
 
         # Gameplay Session Stats
         self.score = 0
@@ -418,6 +453,36 @@ class FruitNinjaGame:
         self.difficulty = diff_order[(idx + 1) % len(diff_order)]
         self.profile_mgr.update_preferences(self.player_id, {"difficulty": self.difficulty})
         self.audio.play_ui_click()
+
+    def cycle_sword_size(self):
+        idx = SWORD_SIZES.index(self.sword_size_preset) if self.sword_size_preset in SWORD_SIZES else 1
+        self.sword_size_preset = SWORD_SIZES[(idx + 1) % len(SWORD_SIZES)]
+        length_mult, width_mult = SWORD_SIZE_CONFIGS[self.sword_size_preset]
+        self.sword_length_mult = length_mult
+        self.sword_width_mult = width_mult
+        if self.tracker:
+            self.tracker.set_sword_size(length_mult, width_mult)
+        self.profile_mgr.update_preferences(self.player_id, {
+            "sword_size_preset": self.sword_size_preset,
+            "sword_length_mult": length_mult
+        })
+        self.audio.play_ui_click()
+
+    def cycle_hand_mode(self):
+        idx = HAND_MODES.index(self.hand_mode) if self.hand_mode in HAND_MODES else 0
+        self.hand_mode = HAND_MODES[(idx + 1) % len(HAND_MODES)]
+        if self.tracker:
+            self.tracker.hand_mode = self.hand_mode
+        self.profile_mgr.update_preferences(self.player_id, {"hand_mode": self.hand_mode})
+        self.audio.play_ui_click()
+
+    def set_hand_mode(self, mode):
+        if mode in HAND_MODES:
+            self.hand_mode = mode
+            if self.tracker:
+                self.tracker.hand_mode = self.hand_mode
+            self.profile_mgr.update_preferences(self.player_id, {"hand_mode": self.hand_mode})
+            self.audio.play_ui_click()
 
     def toggle_auto_grip(self):
         self.auto_grip = not self.auto_grip
@@ -664,14 +729,25 @@ class FruitNinjaGame:
                         elif event.key == pygame.K_r:
                             if self.state in ["PLAYING", "GAMEOVER", "PAUSED"]:
                                 self.start_game(self.mode)
+                            elif self.state == "TUTORIAL":
+                                self.set_hand_mode("RIGHT_ONLY")
+                        elif event.key == pygame.K_l and self.state == "TUTORIAL":
+                            self.set_hand_mode("LEFT_ONLY")
                         elif event.key == pygame.K_m:
                             self.audio.toggle_mute()
                             self.music_mgr.toggle_mute()
                         elif event.key == pygame.K_b:
-                            # Cycle AR background blend
-                            self.ar_blend_alpha = (self.ar_blend_alpha + 0.3) % 1.0
+                            if self.state == "TUTORIAL":
+                                self.set_hand_mode("BOTH")
+                            else:
+                                # Cycle AR background blend
+                                self.ar_blend_alpha = (self.ar_blend_alpha + 0.3) % 1.0
                         elif event.key == pygame.K_d:
                             self.cycle_difficulty()
+                        elif event.key == pygame.K_s:
+                            self.cycle_sword_size()
+                        elif event.key == pygame.K_h:
+                            self.cycle_hand_mode()
                         elif event.key == pygame.K_a:
                             self.toggle_auto_grip()
                         elif event.key == pygame.K_t:
@@ -711,6 +787,10 @@ class FruitNinjaGame:
                                 self.start_game("ARCADE")
                             elif self.btn_diff_rect.collidepoint(m_pos):
                                 self.cycle_difficulty()
+                            elif self.btn_sword_size_rect.collidepoint(m_pos):
+                                self.cycle_sword_size()
+                            elif self.btn_hand_mode_rect.collidepoint(m_pos):
+                                self.cycle_hand_mode()
                             elif self.btn_autogrip_rect.collidepoint(m_pos):
                                 self.toggle_auto_grip()
                             elif self.btn_tutorial_rect.collidepoint(m_pos):
@@ -720,6 +800,12 @@ class FruitNinjaGame:
                         elif self.state == "TUTORIAL":
                             if self.btn_skip_tutorial_rect.collidepoint(m_pos):
                                 self.complete_tutorial()
+                            elif self.tut_hand_right_rect.collidepoint(m_pos):
+                                self.set_hand_mode("RIGHT_ONLY")
+                            elif self.tut_hand_left_rect.collidepoint(m_pos):
+                                self.set_hand_mode("LEFT_ONLY")
+                            elif self.tut_hand_dual_rect.collidepoint(m_pos):
+                                self.set_hand_mode("BOTH")
                             elif self.tutorial_step == 5:
                                 self.complete_tutorial()
                         elif self.state == "GAMEOVER":
@@ -1177,10 +1263,12 @@ class FruitNinjaGame:
     def draw_tracking_badge(self, surf):
         """Displays real-time sword and fist tracking status badge."""
         by = 20 if self.state in ["MENU", "TUTORIAL"] else 82
-        badge_w, badge_h = 285, 34
+        badge_w, badge_h = 320, 34
         badge_rect = pygame.Rect(25, by, badge_w, badge_h)
         
-        # Determine status
+        # Determine camera hardware availability
+        has_camera = (self.camera_pipe and not self.camera_pipe.is_headless) or (self.cap and self.cap.isOpened())
+
         is_active = False
         hand_present = False
         if self.tracker:
@@ -1189,20 +1277,25 @@ class FruitNinjaGame:
             hand_present = self.tracker.any_hand_present
 
         if is_active:
-            status_text = "SWORD ACTIVE (FIST GRIP)" if not self.auto_grip else "SWORD ACTIVE (AUTO-GRIP)"
+            status_text = f"SWORD ACTIVE ({self.sword_size_preset})"
             dot_color = (60, 240, 110)
             text_color = (200, 255, 215)
             border_color = (50, 180, 80)
         elif hand_present:
-            status_text = "CLOSE FIST TO IGNITE SWORD"
+            status_text = "HAND DETECTED — CLOSE FIST"
             dot_color = (255, 200, 40)
             text_color = (255, 235, 160)
             border_color = (190, 150, 40)
+        elif has_camera:
+            status_text = "CAMERA READY — SHOW HAND"
+            dot_color = (80, 200, 255)
+            text_color = (200, 230, 255)
+            border_color = (60, 120, 180)
         else:
-            status_text = "NO HAND DETECTED"
-            dot_color = (160, 170, 180)
-            text_color = (180, 190, 200)
-            border_color = (80, 90, 105)
+            status_text = "WEBCAM OFF (MOUSE MODE)"
+            dot_color = (220, 120, 100)
+            text_color = (235, 180, 170)
+            border_color = (140, 70, 60)
 
         # Draw pill
         bg_surf = pygame.Surface((badge_w, badge_h), pygame.SRCALPHA)
@@ -1439,16 +1532,32 @@ class FruitNinjaGame:
             r = rot.get_rect(center=(int(target.x), int(target.y)))
             surf.blit(rot, r)
 
-        # Bottom Quick Controls Bar
+        # Bottom Quick Controls Bar (6 Action Buttons)
         # 1. Difficulty Button
         d_hover = self.btn_diff_rect.collidepoint(m_pos)
         pygame.draw.rect(surf, (36, 44, 58) if d_hover else (24, 28, 38), self.btn_diff_rect, border_radius=8)
         pygame.draw.rect(surf, (90, 140, 240) if d_hover else (60, 80, 110), self.btn_diff_rect, 2, border_radius=8)
         diff_col = (80, 240, 120) if self.difficulty == "EASY" else ((255, 215, 60) if self.difficulty == "CLASSIC" else (255, 90, 90))
-        d_txt = self.font_small.render(f"[D] DIFFICULTY: {self.difficulty}", True, diff_col)
+        d_txt = self.font_small.render(f"[D] DIFF: {self.difficulty}", True, diff_col)
         surf.blit(d_txt, (self.btn_diff_rect.centerx - d_txt.get_width()//2, self.btn_diff_rect.centery - d_txt.get_height()//2))
 
-        # 2. Auto-Grip Button
+        # 2. Saber Size Button
+        s_hover = self.btn_sword_size_rect.collidepoint(m_pos)
+        pygame.draw.rect(surf, (36, 44, 58) if s_hover else (24, 28, 38), self.btn_sword_size_rect, border_radius=8)
+        pygame.draw.rect(surf, (90, 140, 240) if s_hover else (60, 80, 110), self.btn_sword_size_rect, 2, border_radius=8)
+        s_txt = self.font_small.render(f"[S] SABER: {self.sword_size_preset}", True, (255, 215, 60))
+        surf.blit(s_txt, (self.btn_sword_size_rect.centerx - s_txt.get_width()//2, self.btn_sword_size_rect.centery - s_txt.get_height()//2))
+
+        # 3. Hand Mode Button
+        h_hover = self.btn_hand_mode_rect.collidepoint(m_pos)
+        pygame.draw.rect(surf, (36, 44, 58) if h_hover else (24, 28, 38), self.btn_hand_mode_rect, border_radius=8)
+        pygame.draw.rect(surf, (90, 140, 240) if h_hover else (60, 80, 110), self.btn_hand_mode_rect, 2, border_radius=8)
+        hand_lbl = "RIGHT (1H)" if self.hand_mode == "RIGHT_ONLY" else ("LEFT (1H)" if self.hand_mode == "LEFT_ONLY" else ("AUTO (1H)" if self.hand_mode == "SINGLE_AUTO" else "DUAL (2H)"))
+        h_col = (80, 220, 255) if "LEFT" in hand_lbl else ((255, 140, 60) if "RIGHT" in hand_lbl else (255, 220, 100))
+        h_txt = self.font_small.render(f"[H] HAND: {hand_lbl}", True, h_col)
+        surf.blit(h_txt, (self.btn_hand_mode_rect.centerx - h_txt.get_width()//2, self.btn_hand_mode_rect.centery - h_txt.get_height()//2))
+
+        # 4. Auto-Grip Button
         ag_hover = self.btn_autogrip_rect.collidepoint(m_pos)
         pygame.draw.rect(surf, (36, 44, 58) if ag_hover else (24, 28, 38), self.btn_autogrip_rect, border_radius=8)
         pygame.draw.rect(surf, (90, 140, 240) if ag_hover else (60, 80, 110), self.btn_autogrip_rect, 2, border_radius=8)
@@ -1456,22 +1565,22 @@ class FruitNinjaGame:
         ag_txt = self.font_small.render(f"[A] AUTO-GRIP: {'ON' if self.auto_grip else 'OFF'}", True, ag_col)
         surf.blit(ag_txt, (self.btn_autogrip_rect.centerx - ag_txt.get_width()//2, self.btn_autogrip_rect.centery - ag_txt.get_height()//2))
 
-        # 3. Tutorial Button
+        # 5. Tutorial Button
         tut_hover = self.btn_tutorial_rect.collidepoint(m_pos)
         pygame.draw.rect(surf, (36, 44, 58) if tut_hover else (24, 28, 38), self.btn_tutorial_rect, border_radius=8)
         pygame.draw.rect(surf, (90, 140, 240) if tut_hover else (60, 80, 110), self.btn_tutorial_rect, 2, border_radius=8)
-        tut_txt = self.font_small.render("🥋 [T] TUTORIAL & CALIBRATION", True, (255, 230, 120))
+        tut_txt = self.font_small.render("🥋 [T] TUTORIAL", True, (255, 230, 120))
         surf.blit(tut_txt, (self.btn_tutorial_rect.centerx - tut_txt.get_width()//2, self.btn_tutorial_rect.centery - tut_txt.get_height()//2))
 
-        # 4. Quit Button
+        # 6. Quit Button
         q_hover = self.btn_quit_rect.collidepoint(m_pos)
         pygame.draw.rect(surf, (44, 24, 28) if q_hover else (28, 20, 22), self.btn_quit_rect, border_radius=8)
         pygame.draw.rect(surf, (220, 70, 70) if q_hover else (120, 50, 50), self.btn_quit_rect, 2, border_radius=8)
-        q_txt = self.font_small.render("💣 [ESC] QUIT / EXIT", True, (255, 120, 120))
+        q_txt = self.font_small.render("💣 [ESC] QUIT", True, (255, 120, 120))
         surf.blit(q_txt, (self.btn_quit_rect.centerx - q_txt.get_width()//2, self.btn_quit_rect.centery - q_txt.get_height()//2))
 
         # Keyboard helper footer
-        hint = self.font_small.render("Key shortcuts: [1] Classic  [2] Zen  [3] Arcade  [SPACE] Quick Start  [B] Camera Blend  [M] Mute  [ESC] Exit", True, (150, 160, 180))
+        hint = self.font_small.render("Shortcuts: [1] Classic [2] Zen [3] Arcade [SPACE] Play [S] Saber [H] Hand [A] Grip [D] Diff [ESC] Quit", True, (150, 160, 180))
         surf.blit(hint, (self.screen_w//2 - hint.get_width()//2, self.screen_h - 40))
 
     def draw_tutorial(self, surf):
@@ -1514,36 +1623,66 @@ class FruitNinjaGame:
 
         # Step Specific Content
         if self.tutorial_step == 1:
-            h1 = self.font_header.render("STEP 1: SHOW YOUR HAND", True, (80, 220, 255))
-            surf.blit(h1, (card_rect.centerx - h1.get_width()//2, card_rect.y + 45))
+            h1 = self.font_header.render("STEP 1: SELECT YOUR HAND PREFERENCE", True, (80, 220, 255))
+            surf.blit(h1, (card_rect.centerx - h1.get_width()//2, card_rect.y + 30))
             
-            p1 = self.font_small.render("Raise either hand in front of your laptop webcam.", True, (210, 220, 240))
-            p2 = self.font_small.render("MediaPipe tracks your wrist and 4 knuckle MCP joints.", True, (170, 185, 210))
-            surf.blit(p1, (card_rect.centerx - p1.get_width()//2, card_rect.y + 115))
-            surf.blit(p2, (card_rect.centerx - p2.get_width()//2, card_rect.y + 145))
+            sub_h = self.font_small.render("Choose single hand (Left or Right) or Dual-wielding to continue:", True, (210, 220, 240))
+            surf.blit(sub_h, (card_rect.centerx - sub_h.get_width()//2, card_rect.y + 68))
+
+            # 3 Clickable Hand Preference Pills
+            # 1. Right Handed (Single Hand)
+            is_right = (self.hand_mode == "RIGHT_ONLY")
+            r_hover = self.tut_hand_right_rect.collidepoint(m_pos)
+            pygame.draw.rect(surf, (40, 140, 60) if is_right else ((36, 44, 58) if r_hover else (24, 28, 38)), self.tut_hand_right_rect, border_radius=8)
+            pygame.draw.rect(surf, (255, 215, 0) if is_right else ((90, 140, 240) if r_hover else (60, 80, 110)), self.tut_hand_right_rect, 2 if is_right else 1, border_radius=8)
+            t_r = self.font_small.render("[R] RIGHT-HANDED (1H)", True, (255, 255, 255) if is_right else (200, 215, 235))
+            surf.blit(t_r, (self.tut_hand_right_rect.centerx - t_r.get_width()//2, self.tut_hand_right_rect.centery - t_r.get_height()//2))
+
+            # 2. Left Handed (Single Hand)
+            is_left = (self.hand_mode == "LEFT_ONLY")
+            l_hover = self.tut_hand_left_rect.collidepoint(m_pos)
+            pygame.draw.rect(surf, (40, 140, 60) if is_left else ((36, 44, 58) if l_hover else (24, 28, 38)), self.tut_hand_left_rect, border_radius=8)
+            pygame.draw.rect(surf, (255, 215, 0) if is_left else ((90, 140, 240) if l_hover else (60, 80, 110)), self.tut_hand_left_rect, 2 if is_left else 1, border_radius=8)
+            t_l = self.font_small.render("[L] LEFT-HANDED (1H)", True, (255, 255, 255) if is_left else (200, 215, 235))
+            surf.blit(t_l, (self.tut_hand_left_rect.centerx - t_l.get_width()//2, self.tut_hand_left_rect.centery - t_l.get_height()//2))
+
+            # 3. Dual Wield (Both Hands)
+            is_dual = (self.hand_mode == "BOTH")
+            d_hover = self.tut_hand_dual_rect.collidepoint(m_pos)
+            pygame.draw.rect(surf, (40, 140, 60) if is_dual else ((36, 44, 58) if d_hover else (24, 28, 38)), self.tut_hand_dual_rect, border_radius=8)
+            pygame.draw.rect(surf, (255, 215, 0) if is_dual else ((90, 140, 240) if d_hover else (60, 80, 110)), self.tut_hand_dual_rect, 2 if is_dual else 1, border_radius=8)
+            t_d = self.font_small.render("[B] DUAL WIELD (2H)", True, (255, 255, 255) if is_dual else (200, 215, 235))
+            surf.blit(t_d, (self.tut_hand_dual_rect.centerx - t_d.get_width()//2, self.tut_hand_dual_rect.centery - t_d.get_height()//2))
+
+            p1 = self.font_small.render("Raise your chosen hand in front of your webcam.", True, (210, 220, 240))
+            p2 = self.font_small.render("Single hand mode prevents secondary ghost hands and keeps slicing clean!", True, (170, 185, 210))
+            surf.blit(p1, (card_rect.centerx - p1.get_width()//2, card_rect.y + 168))
+            surf.blit(p2, (card_rect.centerx - p2.get_width()//2, card_rect.y + 198))
 
             # Progress Bar for detection hold
-            prog_rect = pygame.Rect(card_rect.centerx - 160, card_rect.y + 230, 320, 24)
+            prog_rect = pygame.Rect(card_rect.centerx - 160, card_rect.y + 242, 320, 24)
             pygame.draw.rect(surf, (35, 40, 55), prog_rect, border_radius=8)
             fill_w = int(320 * min(1.0, self.tutorial_hand_detected_time / 0.7))
             if fill_w > 0:
                 pygame.draw.rect(surf, (45, 215, 90), (prog_rect.x, prog_rect.y, fill_w, 24), border_radius=8)
             pygame.draw.rect(surf, (100, 130, 180), prog_rect, 2, border_radius=8)
 
-            stat = "Hand detected! Hold still..." if self.tutorial_hand_detected_time > 0 else "Waiting for hand in camera frame..."
+            stat = f"{'Hand detected! Hold still...' if self.tutorial_hand_detected_time > 0 else 'Waiting for hand in camera frame...'} (Mode: {self.hand_mode.replace('_', ' ')})"
             s_t = self.font_small.render(stat, True, (255, 220, 80) if self.tutorial_hand_detected_time > 0 else (170, 180, 195))
-            surf.blit(s_t, (card_rect.centerx - s_t.get_width()//2, card_rect.y + 270))
+            surf.blit(s_t, (card_rect.centerx - s_t.get_width()//2, card_rect.y + 280))
 
         elif self.tutorial_step == 2:
             h1 = self.font_header.render("STEP 2: CLOSE YOUR FIST (IGNITE SWORD)", True, (255, 215, 60))
-            surf.blit(h1, (card_rect.centerx - h1.get_width()//2, card_rect.y + 45))
+            surf.blit(h1, (card_rect.centerx - h1.get_width()//2, card_rect.y + 40))
             
             p1 = self.font_small.render("Clench your hand into a tight fist to ignite your laser sword!", True, (210, 220, 240))
             p2 = self.font_small.render("Left Hand = Electric Cyan  |  Right Hand = Neon Ruby", True, (130, 220, 255))
-            p3 = self.font_small.render("(Tip: Press [A] anytime to enable Auto-Grip mode)", True, (170, 180, 195))
-            surf.blit(p1, (card_rect.centerx - p1.get_width()//2, card_rect.y + 105))
-            surf.blit(p2, (card_rect.centerx - p2.get_width()//2, card_rect.y + 138))
-            surf.blit(p3, (card_rect.centerx - p3.get_width()//2, card_rect.y + 170))
+            p3 = self.font_small.render(f"Hand Mode: {self.hand_mode.replace('_', ' ')}  |  Blade: {self.sword_size_preset}", True, (255, 215, 80))
+            p4 = self.font_small.render("(Tip: Press [A] anytime to enable Auto-Grip mode)", True, (170, 180, 195))
+            surf.blit(p1, (card_rect.centerx - p1.get_width()//2, card_rect.y + 95))
+            surf.blit(p2, (card_rect.centerx - p2.get_width()//2, card_rect.y + 125))
+            surf.blit(p3, (card_rect.centerx - p3.get_width()//2, card_rect.y + 155))
+            surf.blit(p4, (card_rect.centerx - p4.get_width()//2, card_rect.y + 185))
 
             prog_rect = pygame.Rect(card_rect.centerx - 160, card_rect.y + 230, 320, 24)
             pygame.draw.rect(surf, (35, 40, 55), prog_rect, border_radius=8)

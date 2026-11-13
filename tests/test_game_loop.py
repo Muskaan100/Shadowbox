@@ -72,3 +72,64 @@ def test_fruit_ninja_game_headless_lifecycle():
 
     # Cleanup
     game.release_camera()
+
+def test_fruit_ninja_sword_size_settings():
+    game = FruitNinjaGame(use_fullscreen=False)
+    initial_preset = game.sword_size_preset
+    
+    # Cycle through presets
+    game.cycle_sword_size()
+    assert game.sword_size_preset != initial_preset
+    assert game.sword_length_mult > 0
+    assert game.sword_width_mult > 0
+
+    if game.tracker:
+        assert game.tracker.right_sword.length_multiplier == game.sword_length_mult
+        assert game.tracker.right_sword.width_multiplier == game.sword_width_mult
+
+    game.release_camera()
+
+def test_fruit_ninja_hand_mode_settings():
+    game = FruitNinjaGame(use_fullscreen=False)
+    
+    # Test set_hand_mode
+    game.set_hand_mode("RIGHT_ONLY")
+    assert game.hand_mode == "RIGHT_ONLY"
+    if game.tracker:
+        assert game.tracker.hand_mode == "RIGHT_ONLY"
+
+    game.set_hand_mode("LEFT_ONLY")
+    assert game.hand_mode == "LEFT_ONLY"
+    if game.tracker:
+        assert game.tracker.hand_mode == "LEFT_ONLY"
+
+    # Test cycle_hand_mode
+    game.cycle_hand_mode()
+    assert game.hand_mode in ["RIGHT_ONLY", "LEFT_ONLY", "SINGLE_AUTO", "BOTH"]
+
+    game.release_camera()
+
+def test_fruit_ninja_menu_and_tutorial_buttons():
+    game = FruitNinjaGame(use_fullscreen=False)
+    
+    # Validate bottom menu button hitboxes exist and are within screen bounds
+    assert 0 <= game.btn_diff_rect.left < game.screen_w
+    assert 0 <= game.btn_sword_size_rect.left < game.screen_w
+    assert 0 <= game.btn_hand_mode_rect.left < game.screen_w
+    assert 0 <= game.btn_autogrip_rect.left < game.screen_w
+    assert 0 <= game.btn_tutorial_rect.left < game.screen_w
+    assert 0 <= game.btn_quit_rect.right <= game.screen_w
+
+    # Validate tutorial hand selection buttons exist
+    assert game.tut_hand_right_rect.width > 0
+    assert game.tut_hand_left_rect.width > 0
+    assert game.tut_hand_dual_rect.width > 0
+
+    # Test render in MENU and TUTORIAL states
+    game.state = "MENU"
+    game.render(None)
+
+    game.state = "TUTORIAL"
+    game.render(None)
+
+    game.release_camera()
