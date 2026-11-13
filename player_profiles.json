@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "last_active_player_id": "abinivesh",
+  "last_active_player_id": "guest",
   "players": {
     "guest": {
       "id": "guest",
@@ -8,7 +8,6 @@
       "created_at": 1794391452.8100636,
       "preferences": {
         "glove_size": "Large",
-        "custom_glove_scale": 1.3,
         "glove_skin": "Classic Red",
         "blade_color": "Cyan/Amber",
         "music_volume": 0.7,
@@ -35,11 +34,11 @@
       "fruit_ninja": {
         "classic_high_score": 156,
         "zen_high_score": 0,
-        "arcade_high_score": 37,
-        "total_sliced": 174,
+        "arcade_high_score": 254,
+        "total_sliced": 217,
         "max_combo": 4,
-        "bombs_hit": 55,
-        "total_matches": 15
+        "bombs_hit": 60,
+        "total_matches": 22
       }
     },
     "abinivesh": {
@@ -47,42 +46,75 @@
       "name": "Abinivesh",
       "created_at": 1794409982.8232446,
       "preferences": {
-        "glove_size": "Large",
-        "custom_glove_scale": 1.3,
-        "glove_skin": "Neon Purple",
+        "glove_size": "Normal",
+        "glove_skin": "Electric Blue",
         "blade_color": "Cyan/Amber",
-        "music_volume": 0.7,
-        "sfx_volume": 0.85,
+        "music_volume": 0.0,
+        "sfx_volume": 1.0,
         "master_mute": false,
         "mic_sensitivity": 1.0,
         "camera_blend": 0.35,
-        "fullscreen": false,
+        "fullscreen": true,
         "completed_tutorial": true,
-        "difficulty": "EASY",
-        "auto_grip": false,
-        "sword_size_preset": "STANDARD",
-        "sword_length_mult": 1.0,
-        "hand_mode": "SINGLE_AUTO"
+        "difficulty": "EXPERT",
+        "auto_grip": false
       },
       "shadow_boxing": {
         "high_score": 765,
         "total_matches": 5,
         "max_combo": 116,
-        "total_punches": 404,
+        "total_punches": 376,
         "kiai_strikes": 1,
         "bosses_defeated": 8,
-        "dodges_completed": 13,
-        "shields_deflected": 7,
+        "dodges_completed": 12,
+        "shields_deflected": 9,
         "best_session_score": 765
       },
       "fruit_ninja": {
         "classic_high_score": 156,
         "zen_high_score": 0,
-        "arcade_high_score": 0,
-        "total_sliced": 46,
+        "arcade_high_score": 254,
+        "total_sliced": 67,
         "max_combo": 3,
-        "bombs_hit": 35,
-        "total_matches": 34
+        "bombs_hit": 22,
+        "total_matches": 22
+      }
+    },
+    "muskaan": {
+      "id": "muskaan",
+      "name": "Muskaan",
+      "created_at": 1794561301.003422,
+      "preferences": {
+        "glove_size": "Large",
+        "glove_skin": "Classic Red",
+        "blade_color": "Cyan/Amber",
+        "music_volume": 2.7755575615628914e-17,
+        "sfx_volume": 1.0,
+        "master_mute": false,
+        "mic_sensitivity": 1.0,
+        "camera_blend": 0.35,
+        "fullscreen": false,
+        "completed_tutorial": true
+      },
+      "shadow_boxing": {
+        "high_score": 294,
+        "total_matches": 2,
+        "max_combo": 26,
+        "total_punches": 43,
+        "kiai_strikes": 0,
+        "bosses_defeated": 3,
+        "dodges_completed": 5,
+        "shields_deflected": 4,
+        "best_session_score": 294
+      },
+      "fruit_ninja": {
+        "classic_high_score": 122,
+        "zen_high_score": 0,
+        "arcade_high_score": 0,
+        "total_sliced": 22,
+        "max_combo": 2,
+        "bombs_hit": 1,
+        "total_matches": 3
       }
     }
   }

@@ -67,6 +67,16 @@ class ArcadeLauncher:
         self.player_input_text = ""
         self.show_settings_modal = False
 
+        # Leaderboard Context Menu & Deletion Dialog States
+        self.context_menu_open = False
+        self.context_menu_rect = None
+        self.context_menu_player = None
+        self.show_delete_confirm = False
+        self.confirm_player = None
+        self.player_row_rects = []
+        self.delete_btn_rect = None
+        self.cancel_btn_rect = None
+
         # Start menu background music
         self.music.play_track("menu", loop=-1, fade_ms=800)
 
@@ -160,15 +170,26 @@ class ArcadeLauncher:
                 if event.type == pygame.QUIT:
                     running = False
                 elif event.type == pygame.KEYDOWN:
-                    if self.show_player_modal:
+                    if self.show_delete_confirm:
+                        if event.key == pygame.K_ESCAPE:
+                            self.ui_audio.play("close")
+                            self.show_delete_confirm = False
+                            self.confirm_player = None
+                    elif self.context_menu_open:
+                        if event.key == pygame.K_ESCAPE:
+                            self.ui_audio.play("close")
+                            self.context_menu_open = False
+                            self.context_menu_player = None
+                    elif self.show_player_modal:
                         if event.key == pygame.K_ESCAPE:
                             self.ui_audio.play("close")
                             self.show_player_modal = False
+                            self.context_menu_open = False
+                            self.context_menu_player = None
                         elif event.key == pygame.K_RETURN:
                             self.ui_audio.play("confirm")
                             if self.player_input_text.strip():
-                                self.profile_mgr.get_or_create_player(self.player_input_text)
-                            self.show_player_modal = False
+                                self.profile_mgr.create_player(self.player_input_text)
                             self.player_input_text = ""
                         elif event.key == pygame.K_BACKSPACE:
                             self.player_input_text = self.player_input_text[:-1]
@@ -186,7 +207,7 @@ class ArcadeLauncher:
                             self.launch_game(BOXER_SCRIPT)
                         elif event.key == pygame.K_2:
                             self.launch_game(FRUIT_SCRIPT)
-                        elif event.key in [pygame.K_p, pygame.K_TAB]:
+                        elif event.key in [pygame.K_p, pygame.K_TAB, pygame.K_l]:
                             self.ui_audio.play("open")
                             self.show_player_modal = True
                             self.player_input_text = ""
@@ -198,27 +219,63 @@ class ArcadeLauncher:
                             muted = self.music.toggle_mute()
                             self.profile_mgr.update_preferences(active_player["id"], {"master_mute": muted})
 
-                elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                    if self.show_player_modal:
-                        self.handle_player_modal_click(mouse_pos)
-                    elif self.show_settings_modal:
-                        self.handle_settings_modal_click(mouse_pos)
-                    else:
-                        if self.hovered_card == 1:
-                            self.launch_game(BOXER_SCRIPT)
-                        elif self.hovered_card == 2:
-                            self.launch_game(FRUIT_SCRIPT)
-                        # Top-bar player badge click
-                        badge_rect = pygame.Rect(30, 20, 320, 48)
-                        if badge_rect.collidepoint(mouse_pos):
-                            self.ui_audio.play("open")
-                            self.show_player_modal = True
-                            self.player_input_text = ""
-                        # Top-bar settings button click
-                        set_rect = pygame.Rect(SCREEN_W - 190, 20, 160, 44)
-                        if set_rect.collidepoint(mouse_pos):
-                            self.ui_audio.play("open")
-                            self.show_settings_modal = True
+                elif event.type == pygame.MOUSEBUTTONDOWN:
+                    if event.button == 3:  # RIGHT-CLICK: Custom Context Menu on Leaderboard Records
+                        if self.show_player_modal and not self.show_delete_confirm and not self.show_settings_modal:
+                            hit_record = False
+                            for p_rect, p in self.player_row_rects:
+                                if p_rect.collidepoint(mouse_pos):
+                                    self.ui_audio.play("select")
+                                    self.context_menu_player = p
+                                    self.context_menu_open = True
+                                    cm_w, cm_h = 175, 42
+                                    cm_x = max(10, min(mouse_pos[0] + 4, SCREEN_W - cm_w - 10))
+                                    cm_y = max(10, min(mouse_pos[1] + 4, SCREEN_H - cm_h - 10))
+                                    self.context_menu_rect = pygame.Rect(cm_x, cm_y, cm_w, cm_h)
+                                    hit_record = True
+                                    break
+                            if not hit_record:
+                                self.context_menu_open = False
+                                self.context_menu_player = None
+
+                    elif event.button == 1:  # LEFT-CLICK
+                        if self.show_delete_confirm:
+                            self.handle_delete_confirm_click(mouse_pos)
+                        elif self.context_menu_open:
+                            if self.context_menu_rect and self.context_menu_rect.collidepoint(mouse_pos):
+                                self.ui_audio.play("open")
+                                self.context_menu_open = False
+                                self.show_delete_confirm = True
+                                self.confirm_player = self.context_menu_player
+                            else:
+                                self.context_menu_open = False
+                                self.context_menu_player = None
+                        elif self.show_player_modal:
+                            self.handle_player_modal_click(mouse_pos)
+                        elif self.show_settings_modal:
+                            self.handle_settings_modal_click(mouse_pos)
+                        else:
+                            if self.hovered_card == 1:
+                                self.launch_game(BOXER_SCRIPT)
+                            elif self.hovered_card == 2:
+                                self.launch_game(FRUIT_SCRIPT)
+                            # Top-bar player badge click
+                            badge_rect = pygame.Rect(30, 20, 320, 48)
+                            if badge_rect.collidepoint(mouse_pos):
+                                self.ui_audio.play("open")
+                                self.show_player_modal = True
+                                self.player_input_text = ""
+                            # Top-bar leaderboard button click
+                            lead_rect = pygame.Rect(SCREEN_W - 370, 20, 165, 48)
+                            if lead_rect.collidepoint(mouse_pos):
+                                self.ui_audio.play("open")
+                                self.show_player_modal = True
+                                self.player_input_text = ""
+                            # Top-bar settings button click
+                            set_rect = pygame.Rect(SCREEN_W - 190, 20, 160, 44)
+                            if set_rect.collidepoint(mouse_pos):
+                                self.ui_audio.play("open")
+                                self.show_settings_modal = True
 
             # -----------------------------------------------------------------
             # RENDER
@@ -250,14 +307,21 @@ class ArcadeLauncher:
         p_fruit_best = max(fn_data.get("classic_high_score", 0), fn_data.get("arcade_high_score", 0), fn_data.get("zen_high_score", 0))
 
         # Player Badge Box (Clickable)
-        badge_rect = pygame.Rect(30, 20, 340, 52)
+        badge_rect = pygame.Rect(30, 20, 320, 52)
         pygame.draw.rect(self.screen, (24, 28, 38), badge_rect, border_radius=10)
         pygame.draw.rect(self.screen, (70, 130, 220), badge_rect, 2, border_radius=10)
         
-        lbl_p = self.font_small.render("PLAYER PROFILE [PRESS P / TAB]:", True, (150, 180, 220))
+        lbl_p = self.font_small.render("ACTIVE PLAYER [PRESS P / TAB]:", True, (150, 180, 220))
         self.screen.blit(lbl_p, (42, 25))
         name_t = self.font_ui.render(f"👤 {p_name.upper()}", True, (255, 255, 255))
         self.screen.blit(name_t, (42, 46))
+
+        # Leaderboard Button (Top Center-Right)
+        lead_rect = pygame.Rect(SCREEN_W - 375, 20, 170, 48)
+        pygame.draw.rect(self.screen, (34, 30, 24), lead_rect, border_radius=8)
+        pygame.draw.rect(self.screen, (220, 180, 50), lead_rect, 1, border_radius=8)
+        lead_t = self.font_ui.render("🏆 RECORDS [L]", True, (255, 215, 60))
+        self.screen.blit(lead_t, (lead_rect.centerx - lead_t.get_width()//2, lead_rect.centery - lead_t.get_height()//2))
 
         # Settings & Mute Status Buttons (Top Right)
         set_rect = pygame.Rect(SCREEN_W - 190, 20, 160, 48)
@@ -348,11 +412,11 @@ class ArcadeLauncher:
         self.screen.blit(btn2_t, (btn2.centerx - btn2_t.get_width()//2, btn2.centery - btn2_t.get_height()//2))
 
         # 5. Bottom Control Footer
-        footer = self.font_tagline.render("SELECT WITH MOUSE OR [1] SHADOW BOXING  •  [2] FRUIT NINJA  •  [ESC/Q] EXIT", True, (150, 165, 185))
+        footer = self.font_tagline.render("SELECT WITH MOUSE OR [1] SHADOW BOXING  •  [2] FRUIT NINJA  •  [L/P] LEADERBOARD  •  [S] SETTINGS  •  [ESC/Q] EXIT", True, (150, 165, 185))
         self.screen.blit(footer, (SCREEN_W//2 - footer.get_width()//2, SCREEN_H - 50))
 
     # -------------------------------------------------------------------------
-    # PLAYER PROFILE SELECTION MODAL ("WHO'S PLAYING TODAY?")
+    # ARCADE LEADERBOARD & PLAYER PROFILES MODAL (WITH RIGHT-CLICK DELETION)
     # -------------------------------------------------------------------------
 
     def render_player_modal(self):
@@ -362,78 +426,256 @@ class ArcadeLauncher:
         self.screen.blit(dim, (0, 0))
 
         # Modal Box
-        mw, mh = 640, 480
+        mw, mh = 720, 560
         mx = (SCREEN_W - mw) // 2
         my = (SCREEN_H - mh) // 2
         modal_rect = pygame.Rect(mx, my, mw, mh)
-        pygame.draw.rect(self.screen, (22, 26, 36), modal_rect, border_radius=16)
-        pygame.draw.rect(self.screen, (80, 140, 240), modal_rect, 2, border_radius=16)
+        pygame.draw.rect(self.screen, (20, 24, 34), modal_rect, border_radius=16)
+        pygame.draw.rect(self.screen, (70, 130, 220), modal_rect, 2, border_radius=16)
 
         # Title Header
-        title = self.font_card_title.render("WHO'S PLAYING TODAY?", True, (255, 215, 0))
-        self.screen.blit(title, (mx + mw//2 - title.get_width()//2, my + 25))
+        title = self.font_card_title.render("ARCADE LEADERBOARD & PROFILES", True, (255, 215, 0))
+        self.screen.blit(title, (mx + mw//2 - title.get_width()//2, my + 18))
 
-        sub = self.font_small.render("Enter your name to track personal high scores & records independently.", True, (190, 200, 220))
-        self.screen.blit(sub, (mx + mw//2 - sub.get_width()//2, my + 72))
+        sub = self.font_small.render("Select active player  •  [Right-Click] any entry to Delete Record  •  [ESC] Close", True, (170, 190, 215))
+        self.screen.blit(sub, (mx + mw//2 - sub.get_width()//2, my + 58))
 
-        # Text Input Box
-        input_rect = pygame.Rect(mx + 60, my + 110, mw - 120, 48)
-        pygame.draw.rect(self.screen, (32, 38, 52), input_rect, border_radius=8)
+        # Text Input Box & Add Button Row
+        input_rect = pygame.Rect(mx + 45, my + 84, 380, 42)
+        pygame.draw.rect(self.screen, (30, 36, 48), input_rect, border_radius=8)
         pygame.draw.rect(self.screen, (100, 160, 255), input_rect, 2, border_radius=8)
         
         display_str = self.player_input_text if self.player_input_text else "Type name here (max 18 chars)..."
         text_col = (255, 255, 255) if self.player_input_text else (130, 145, 170)
         inp_t = self.font_ui.render(display_str, True, text_col)
-        self.screen.blit(inp_t, (input_rect.x + 16, input_rect.centery - inp_t.get_height()//2))
+        self.screen.blit(inp_t, (input_rect.x + 14, input_rect.centery - inp_t.get_height()//2))
 
-        # Quick Actions
-        conf_rect = pygame.Rect(mx + 60, my + 170, 240, 42)
+        conf_rect = pygame.Rect(mx + 438, my + 84, 138, 42)
         pygame.draw.rect(self.screen, (40, 160, 70), conf_rect, border_radius=8)
-        conf_t = self.font_ui.render("ENTER / CONFIRM", True, (255, 255, 255))
+        conf_t = self.font_ui.render("+ ADD NEW", True, (255, 255, 255))
         self.screen.blit(conf_t, (conf_rect.centerx - conf_t.get_width()//2, conf_rect.centery - conf_t.get_height()//2))
 
-        guest_rect = pygame.Rect(mx + 340, my + 170, 240, 42)
+        guest_rect = pygame.Rect(mx + 588, my + 84, 88, 42)
         pygame.draw.rect(self.screen, (50, 60, 80), guest_rect, border_radius=8)
-        guest_t = self.font_ui.render("PLAY AS GUEST", True, (220, 225, 240))
+        guest_t = self.font_ui.render("GUEST", True, (220, 225, 240))
         self.screen.blit(guest_t, (guest_rect.centerx - guest_t.get_width()//2, guest_rect.centery - guest_t.get_height()//2))
 
-        # Existing Saved Profiles List
-        header_p = self.font_small.render("OR SELECT EXISTING PROFILE:", True, (160, 175, 195))
-        self.screen.blit(header_p, (mx + 60, my + 235))
+        # Leaderboard Table Header Bar
+        hdr_rect = pygame.Rect(mx + 45, my + 138, mw - 90, 28)
+        pygame.draw.rect(self.screen, (28, 34, 46), hdr_rect, border_radius=6)
+        
+        h_rank = self.font_small.render("RANK", True, (150, 170, 195))
+        h_name = self.font_small.render("PLAYER NAME", True, (150, 170, 195))
+        h_box = self.font_small.render("BOXING", True, (255, 140, 100))
+        h_fn = self.font_small.render("FRUIT", True, (100, 230, 140))
+        h_best = self.font_small.render("RECORD", True, (255, 215, 60))
+        h_stat = self.font_small.render("STATUS", True, (150, 170, 195))
+        
+        self.screen.blit(h_rank, (mx + 56, hdr_rect.centery - h_rank.get_height()//2))
+        self.screen.blit(h_name, (mx + 115, hdr_rect.centery - h_name.get_height()//2))
+        self.screen.blit(h_box, (mx + 315, hdr_rect.centery - h_box.get_height()//2))
+        self.screen.blit(h_fn, (mx + 415, hdr_rect.centery - h_fn.get_height()//2))
+        self.screen.blit(h_best, (mx + 495, hdr_rect.centery - h_best.get_height()//2))
+        self.screen.blit(h_stat, (mx + 595, hdr_rect.centery - h_stat.get_height()//2))
 
-        players = self.profile_mgr.list_players()[:4]
-        py_offset = my + 265
-        for p in players:
-            p_rect = pygame.Rect(mx + 60, py_offset, mw - 120, 38)
-            is_active = (p["id"] == self.profile_mgr.get_active_player()["id"])
-            col = (45, 75, 130) if is_active else (28, 34, 46)
-            pygame.draw.rect(self.screen, col, p_rect, border_radius=6)
+        # Leaderboard Records List
+        self.player_row_rects = []
+        players = self.profile_mgr.list_players()
+        active_player = self.profile_mgr.get_active_player()
+        active_id = active_player.get("id")
+
+        if not players:
+            # Empty State
+            empty_rect = pygame.Rect(mx + 45, my + 175, mw - 90, 310)
+            pygame.draw.rect(self.screen, (16, 20, 28), empty_rect, border_radius=10)
+            pygame.draw.rect(self.screen, (45, 55, 75), empty_rect, 1, border_radius=10)
             
-            p_lbl = self.font_small.render(f"👤 {p['name']}  (Boxing: {p['boxer_best']} pts | Fruit: {p['fruit_best']} pts)", True, (255, 255, 255))
-            self.screen.blit(p_lbl, (p_rect.x + 14, p_rect.centery - p_lbl.get_height()//2))
+            e_title = self.font_card_title.render("NO LEADERBOARD RECORDS YET", True, (210, 215, 230))
+            self.screen.blit(e_title, (empty_rect.centerx - e_title.get_width()//2, empty_rect.centery - 35))
             
-            if is_active:
-                cur_t = self.font_small.render("[ACTIVE]", True, (100, 255, 120))
-                self.screen.blit(cur_t, (p_rect.right - cur_t.get_width() - 14, p_rect.centery - cur_t.get_height()//2))
-            py_offset += 45
+            e_sub = self.font_small.render("All records have been cleared. Enter a name above or play a game to set a score!", True, (140, 155, 180))
+            self.screen.blit(e_sub, (empty_rect.centerx - e_sub.get_width()//2, empty_rect.centery + 12))
+        else:
+            mouse_pos = pygame.mouse.get_pos()
+            py_offset = my + 172
+            for idx, p in enumerate(players[:6], 1):
+                p_rect = pygame.Rect(mx + 45, py_offset, mw - 90, 44)
+                is_active = (p["id"] == active_id)
+                is_hover = p_rect.collidepoint(mouse_pos) and not self.context_menu_open and not self.show_delete_confirm
+                
+                # Colors
+                if is_active:
+                    bg_col = (34, 46, 68) if is_hover else (26, 36, 54)
+                    border_col = (80, 220, 130)
+                    border_w = 2
+                elif is_hover:
+                    bg_col = (36, 44, 60)
+                    border_col = (100, 160, 255)
+                    border_w = 2
+                else:
+                    bg_col = (22, 26, 36)
+                    border_col = (45, 52, 70)
+                    border_w = 1
+                    
+                pygame.draw.rect(self.screen, bg_col, p_rect, border_radius=8)
+                pygame.draw.rect(self.screen, border_col, p_rect, border_w, border_radius=8)
+                
+                # Rank
+                if idx == 1:
+                    r_col = (255, 215, 0)
+                elif idx == 2:
+                    r_col = (215, 220, 230)
+                elif idx == 3:
+                    r_col = (215, 140, 80)
+                else:
+                    r_col = (140, 155, 175)
+                r_txt = self.font_small.render(f"#{idx}", True, r_col)
+                self.screen.blit(r_txt, (mx + 58, p_rect.centery - r_txt.get_height()//2))
+
+                # Name
+                name_txt = self.font_ui.render(f"👤 {p['name']}", True, (255, 255, 255))
+                self.screen.blit(name_txt, (mx + 115, p_rect.centery - name_txt.get_height()//2))
+
+                # Boxing Score
+                b_txt = self.font_small.render(f"{p['boxer_best']} pts", True, (255, 140, 100))
+                self.screen.blit(b_txt, (mx + 315, p_rect.centery - b_txt.get_height()//2))
+
+                # Fruit Ninja Score
+                f_txt = self.font_small.render(f"{p['fruit_best']} pts", True, (100, 230, 140))
+                self.screen.blit(f_txt, (mx + 415, p_rect.centery - f_txt.get_height()//2))
+
+                # Combined High Score
+                tot_txt = self.font_small.render(f"{p['high_score']} pts", True, (255, 215, 60))
+                self.screen.blit(tot_txt, (mx + 495, p_rect.centery - tot_txt.get_height()//2))
+
+                # Status tag
+                if is_active:
+                    st_txt = self.font_small.render("[ACTIVE]", True, (80, 255, 120))
+                else:
+                    st_txt = self.font_small.render("[SELECT]", True, (130, 150, 180))
+                self.screen.blit(st_txt, (mx + 595, p_rect.centery - st_txt.get_height()//2))
+
+                self.player_row_rects.append((p_rect, p))
+                py_offset += 52
 
         # Close Hint
-        hint = self.font_small.render("Press [ESC] to Cancel", True, (150, 150, 160))
-        self.screen.blit(hint, (mx + mw//2 - hint.get_width()//2, my + mh - 30))
+        hint = self.font_small.render("Right-Click on any row to Delete Record  •  Left-Click to Select  •  [ESC] Close", True, (150, 160, 180))
+        self.screen.blit(hint, (mx + mw//2 - hint.get_width()//2, my + mh - 26))
+
+        # ---------------------------------------------------------------------
+        # CONTEXT MENU (RIGHT-CLICK)
+        # ---------------------------------------------------------------------
+        if self.context_menu_open and self.context_menu_player and self.context_menu_rect:
+            cm = self.context_menu_rect
+            # Drop shadow
+            shadow_rect = cm.move(3, 3)
+            s_surf = pygame.Surface((shadow_rect.w, shadow_rect.h), pygame.SRCALPHA)
+            s_surf.fill((0, 0, 0, 180))
+            self.screen.blit(s_surf, shadow_rect.topleft)
+
+            mouse_pos = pygame.mouse.get_pos()
+            is_cm_hover = cm.collidepoint(mouse_pos)
+            cm_bg = (180, 35, 35) if is_cm_hover else (24, 28, 40)
+            pygame.draw.rect(self.screen, cm_bg, cm, border_radius=6)
+            pygame.draw.rect(self.screen, (235, 55, 55), cm, 2, border_radius=6)
+            
+            del_t = self.font_small.render("🗑 Delete Record", True, (255, 255, 255))
+            self.screen.blit(del_t, (cm.centerx - del_t.get_width()//2, cm.centery - del_t.get_height()//2))
+
+        # ---------------------------------------------------------------------
+        # DELETE CONFIRMATION DIALOG MODAL
+        # ---------------------------------------------------------------------
+        if self.show_delete_confirm and self.confirm_player:
+            c_dim = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA)
+            c_dim.fill((0, 0, 0, 215))
+            self.screen.blit(c_dim, (0, 0))
+
+            cw, ch = 560, 270
+            cx = (SCREEN_W - cw) // 2
+            cy = (SCREEN_H - ch) // 2
+            confirm_box = pygame.Rect(cx, cy, cw, ch)
+            pygame.draw.rect(self.screen, (22, 26, 36), confirm_box, border_radius=14)
+            pygame.draw.rect(self.screen, (225, 50, 50), confirm_box, 2, border_radius=14)
+
+            # Header
+            t_conf = self.font_card_title.render("DELETE LEADERBOARD RECORD?", True, (255, 75, 75))
+            self.screen.blit(t_conf, (cx + cw//2 - t_conf.get_width()//2, cy + 22))
+
+            # Record Details
+            p_name = self.confirm_player.get("name", "Player")
+            b_sc = self.confirm_player.get("boxer_best", 0)
+            f_sc = self.confirm_player.get("fruit_best", 0)
+            p_id = self.confirm_player.get("id", "")
+
+            name_line = self.font_ui.render(f"Player: 👤 {p_name}  (Record ID: {p_id})", True, (255, 255, 255))
+            self.screen.blit(name_line, (cx + cw//2 - name_line.get_width()//2, cy + 80))
+
+            score_line = self.font_small.render(f"High Scores: Shadow Boxing {b_sc} pts  •  Fruit Ninja {f_sc} pts", True, (255, 215, 60))
+            self.screen.blit(score_line, (cx + cw//2 - score_line.get_width()//2, cy + 115))
+
+            warn_line = self.font_small.render("This will permanently delete this record from persistent storage.", True, (215, 170, 170))
+            self.screen.blit(warn_line, (cx + cw//2 - warn_line.get_width()//2, cy + 145))
+
+            # Action Buttons
+            mouse_pos = pygame.mouse.get_pos()
+            self.cancel_btn_rect = pygame.Rect(cx + 45, cy + 195, 215, 46)
+            self.delete_btn_rect = pygame.Rect(cx + 300, cy + 195, 215, 46)
+
+            can_hover = self.cancel_btn_rect.collidepoint(mouse_pos)
+            del_hover = self.delete_btn_rect.collidepoint(mouse_pos)
+
+            pygame.draw.rect(self.screen, (60, 72, 95) if can_hover else (45, 52, 70), self.cancel_btn_rect, border_radius=8)
+            pygame.draw.rect(self.screen, (100, 120, 150), self.cancel_btn_rect, 1, border_radius=8)
+            btn_can_t = self.font_ui.render("CANCEL [ESC]", True, (225, 230, 245))
+            self.screen.blit(btn_can_t, (self.cancel_btn_rect.centerx - btn_can_t.get_width()//2, self.cancel_btn_rect.centery - btn_can_t.get_height()//2))
+
+            pygame.draw.rect(self.screen, (240, 45, 45) if del_hover else (200, 35, 35), self.delete_btn_rect, border_radius=8)
+            pygame.draw.rect(self.screen, (255, 100, 100), self.delete_btn_rect, 1, border_radius=8)
+            btn_del_t = self.font_ui.render("DELETE RECORD", True, (255, 255, 255))
+            self.screen.blit(btn_del_t, (self.delete_btn_rect.centerx - btn_del_t.get_width()//2, self.delete_btn_rect.centery - btn_del_t.get_height()//2))
+
+    def handle_delete_confirm_click(self, pos):
+        """Processes clicks inside the delete confirmation modal."""
+        if self.delete_btn_rect and self.delete_btn_rect.collidepoint(pos):
+            if self.confirm_player:
+                pid = self.confirm_player["id"]
+                self.profile_mgr.delete_player(pid)
+                self.ui_audio.play("confirm")
+            self.show_delete_confirm = False
+            self.confirm_player = None
+            self.context_menu_open = False
+            self.context_menu_player = None
+        elif self.cancel_btn_rect and self.cancel_btn_rect.collidepoint(pos):
+            self.ui_audio.play("close")
+            self.show_delete_confirm = False
+            self.confirm_player = None
+            self.context_menu_open = False
+            self.context_menu_player = None
+        else:
+            # Clicked outside confirmation box
+            cw, ch = 560, 270
+            cx = (SCREEN_W - cw) // 2
+            cy = (SCREEN_H - ch) // 2
+            confirm_box = pygame.Rect(cx, cy, cw, ch)
+            if not confirm_box.collidepoint(pos):
+                self.ui_audio.play("close")
+                self.show_delete_confirm = False
+                self.confirm_player = None
+                self.context_menu_open = False
+                self.context_menu_player = None
 
     def handle_player_modal_click(self, pos):
-        mw, mh = 640, 480
+        mw, mh = 720, 560
         mx = (SCREEN_W - mw) // 2
         my = (SCREEN_H - mh) // 2
         
-        conf_rect = pygame.Rect(mx + 60, my + 170, 240, 42)
-        guest_rect = pygame.Rect(mx + 340, my + 170, 240, 42)
+        conf_rect = pygame.Rect(mx + 438, my + 84, 138, 42)
+        guest_rect = pygame.Rect(mx + 588, my + 84, 88, 42)
 
         if conf_rect.collidepoint(pos):
             self.ui_audio.play("confirm")
             if self.player_input_text.strip():
-                self.profile_mgr.get_or_create_player(self.player_input_text)
-            self.show_player_modal = False
+                self.profile_mgr.create_player(self.player_input_text)
             self.player_input_text = ""
         elif guest_rect.collidepoint(pos):
             self.ui_audio.play("confirm")
@@ -441,18 +683,14 @@ class ArcadeLauncher:
             self.show_player_modal = False
             self.player_input_text = ""
         else:
-            # Check existing profiles click
-            players = self.profile_mgr.list_players()[:4]
-            py_offset = my + 265
-            for p in players:
-                p_rect = pygame.Rect(mx + 60, py_offset, mw - 120, 38)
+            # Check row clicks to select active player
+            for p_rect, p in self.player_row_rects:
                 if p_rect.collidepoint(pos):
                     self.ui_audio.play("confirm")
                     self.profile_mgr.set_active_player(p["id"])
                     self.show_player_modal = False
                     self.player_input_text = ""
                     break
-                py_offset += 45
 
     # -------------------------------------------------------------------------
     # SETTINGS & CUSTOMIZATION MODAL
@@ -478,19 +716,21 @@ class ArcadeLauncher:
         sy = my + 72
 
         # 1. Glove Size Setting (Shadow Boxing)
-        g_size = prefs.get("glove_size", "Large")
+        g_size = prefs.get("glove_size", "Normal")
+        if g_size == "Custom":
+            g_size = "Normal"
         lbl1 = self.font_ui.render("Boxing Glove Size:", True, (255, 255, 255))
         self.screen.blit(lbl1, (mx + 45, sy))
         
-        opts = [("Large", "1.30x (Default)"), ("Extra Large", "1.45x"), ("Custom", "1.20x")]
+        opts = [("Normal", "Normal (1.30x)"), ("Large", "Large (1.45x)")]
         ox = mx + 265
         for opt_val, opt_lbl in opts:
-            r = pygame.Rect(ox, sy - 4, 120, 30)
-            sel = (g_size == opt_val)
+            r = pygame.Rect(ox, sy - 4, 185, 30)
+            sel = (g_size == opt_val) or (opt_val == "Normal" and g_size not in ("Normal", "Large"))
             pygame.draw.rect(self.screen, (40, 130, 240) if sel else (35, 40, 55), r, border_radius=6)
-            t = self.font_small.render(opt_val, True, (255, 255, 255) if sel else (180, 190, 200))
+            t = self.font_small.render(opt_lbl, True, (255, 255, 255) if sel else (180, 190, 200))
             self.screen.blit(t, (r.centerx - t.get_width()//2, r.centery - t.get_height()//2))
-            ox += 128
+            ox += 195
 
         # 2. Glove Cosmetic Skin (Shadow Boxing)
         sy += 48
@@ -614,15 +854,15 @@ class ArcadeLauncher:
 
         # 1. Glove Size options
         sy1 = my + 72
-        opts = ["Large", "Extra Large", "Custom"]
+        opts = ["Normal", "Large"]
         ox = mx + 265
         for opt_val in opts:
-            r = pygame.Rect(ox, sy1 - 4, 120, 30)
+            r = pygame.Rect(ox, sy1 - 4, 185, 30)
             if r.collidepoint(pos):
                 self.ui_audio.play("toggle")
                 self.profile_mgr.update_preferences(pid, {"glove_size": opt_val})
                 return
-            ox += 128
+            ox += 195
 
         # 2. Glove Skin options
         sy2 = sy1 + 48

@@ -2,7 +2,7 @@
 =============================================================================
 PLAYER PROFILES & ATOMIC RECORD PERSISTENCE (player_profiles.py)
 Lightweight Local Profile Manager, Atomic JSON Storage, Legacy Migration,
-and Per-Player Statistical Tracking.
+and Per-Player Statistical Tracking with Leaderboard Record Deletion.
 =============================================================================
 """
 
@@ -19,8 +19,7 @@ LEGACY_BOXER_FILE = os.path.join(os.path.dirname(__file__), "high_score.json")
 LEGACY_FRUIT_FILE = os.path.join(os.path.dirname(__file__), "fruit_ninja_high_score.json")
 
 DEFAULT_PREFERENCES = {
-    "glove_size": "Large",       # "Large" (1.30x), "Extra Large" (1.45x), "Custom"
-    "custom_glove_scale": 1.30,
+    "glove_size": "Normal",       # "Normal" (1.30x), "Large" (1.45x)
     "glove_skin": "Classic Red", # "Classic Red", "Electric Blue", "Neon Purple", "Golden"
     "blade_color": "Cyan/Amber", # "Cyan/Amber", "Neon Emerald", "Violet Blade", "Molten Gold"
     "music_volume": 0.70,
@@ -103,7 +102,7 @@ class ProfileManager:
                     except Exception as be:
                         print(f"[ProfileManager Error] Backup also failed: {be}")
 
-        if not loaded or "players" not in self.data or not self.data["players"]:
+        if not loaded or "players" not in self.data:
             self.data = {
                 "version": 1,
                 "last_active_player_id": "guest",
@@ -115,10 +114,25 @@ class ProfileManager:
             self.migrate_legacy_scores()
             self.save()
         else:
-            # Ensure guest exists and migrate legacy scores
-            if "guest" not in self.data["players"]:
-                self.data["players"]["guest"] = make_default_profile("guest", "Guest")
-            self.migrate_legacy_scores()
+            # Sanitize preferences on all existing players (remove Custom fallback to Normal)
+            for pid, pdata in self.data["players"].items():
+                pdata["id"] = pid
+                prefs = pdata.setdefault("preferences", {})
+                if prefs.get("glove_size") == "Custom":
+                    prefs["glove_size"] = "Normal"
+                elif prefs.get("glove_size") == "Extra Large":
+                    prefs["glove_size"] = "Large"
+                elif prefs.get("glove_size") not in ("Normal", "Large"):
+                    prefs["glove_size"] = "Normal"
+                prefs.pop("custom_glove_scale", None)
+
+            # Ensure last_active_player_id points to valid player if players exist
+            if self.data["players"]:
+                cur = self.data.get("last_active_player_id")
+                if not cur or cur not in self.data["players"]:
+                    self.data["last_active_player_id"] = list(self.data["players"].keys())[0]
+            else:
+                self.data["last_active_player_id"] = None
 
     def save(self):
         """Safe atomic write: write to temp file, validate, replace original, and update backup."""
@@ -193,19 +207,34 @@ class ProfileManager:
             self.save()
 
     def list_players(self):
-        """Returns list of (id, display_name, boxer_best, fruit_best)."""
+        """Returns list of player record dicts sorted by highest score descending for the leaderboard."""
         res = []
-        for pid, pdata in self.data["players"].items():
+        for pid, pdata in self.data.get("players", {}).items():
             b_best = pdata.get("shadow_boxing", {}).get("high_score", 0)
             fn = pdata.get("fruit_ninja", {})
             f_best = max(fn.get("classic_high_score", 0), fn.get("arcade_high_score", 0), fn.get("zen_high_score", 0))
+            best_combined = max(b_best, f_best)
             res.append({
                 "id": pid,
                 "name": pdata.get("name", pid),
                 "boxer_best": b_best,
-                "fruit_best": f_best
+                "fruit_best": f_best,
+                "high_score": best_combined,
+                "created_at": pdata.get("created_at", 0)
             })
-        return sorted(res, key=lambda x: (x["name"].lower() != "guest", x["name"].lower()))
+        return sorted(res, key=lambda x: (x["high_score"], x["boxer_best"]), reverse=True)
+
+    def generate_unique_player_id(self, display_name):
+        """Generate a guaranteed unique record ID, handling duplicate player names cleanly."""
+        base_id = normalize_profile_id(display_name)
+        if not base_id:
+            base_id = "player"
+        if base_id not in self.data.get("players", {}):
+            return base_id
+        suffix = 2
+        while f"{base_id}_{suffix}" in self.data["players"]:
+            suffix += 1
+        return f"{base_id}_{suffix}"
 
     def get_or_create_player(self, raw_name):
         display_name = sanitize_player_name(raw_name)
@@ -215,6 +244,29 @@ class ProfileManager:
             self.save()
         self.set_active_player(pid)
         return self.data["players"][pid]
+
+    def create_player(self, raw_name):
+        """Explicitly create a new player entry with a unique ID even if the name duplicates an existing one."""
+        display_name = sanitize_player_name(raw_name)
+        pid = self.generate_unique_player_id(display_name)
+        self.data["players"][pid] = make_default_profile(pid, display_name)
+        self.set_active_player(pid)
+        self.save()
+        return self.data["players"][pid]
+
+    def delete_player(self, player_id):
+        """Permanently remove a player record and their scores from persistent storage by unique ID."""
+        if player_id in self.data.get("players", {}):
+            del self.data["players"][player_id]
+
+            # If deleted player was currently active, switch to next available player
+            if self.data.get("last_active_player_id") == player_id:
+                remaining = list(self.data["players"].keys())
+                self.data["last_active_player_id"] = remaining[0] if remaining else None
+
+            self.save()
+            return True
+        return False
 
     def set_active_player(self, player_id):
         if player_id in self.data["players"]:
@@ -227,16 +279,23 @@ class ProfileManager:
         return self.data["players"].get(player_id)
 
     def get_active_player(self):
-        pid = self.data.get("last_active_player_id", "guest")
-        if pid not in self.data["players"]:
-            pid = "guest"
-            if "guest" not in self.data["players"]:
-                self.data["players"]["guest"] = make_default_profile("guest", "Guest")
+        pid = self.data.get("last_active_player_id")
+        if not pid or pid not in self.data.get("players", {}):
+            if self.data.get("players"):
+                pid = list(self.data["players"].keys())[0]
+                self.data["last_active_player_id"] = pid
+            else:
+                # Empty state: transient guest fallback profile without saving
+                return make_default_profile("guest", "Guest")
         return self.data["players"][pid]
 
     def record_shadow_boxing_match(self, player_id, score, combo=0, punches=0, kiai=0, bosses=0, dodges=0, shields=0):
         if player_id not in self.data["players"]:
-            player_id = "guest"
+            if self.data["players"]:
+                player_id = list(self.data["players"].keys())[0]
+            else:
+                player_id = "guest"
+                self.data["players"]["guest"] = make_default_profile("guest", "Guest")
         p = self.data["players"][player_id]["shadow_boxing"]
         p["total_matches"] += 1
         p["total_punches"] += punches
@@ -256,7 +315,11 @@ class ProfileManager:
 
     def record_fruit_ninja_match(self, player_id, mode, score, sliced=0, combo=0, bombs=0):
         if player_id not in self.data["players"]:
-            player_id = "guest"
+            if self.data["players"]:
+                player_id = list(self.data["players"].keys())[0]
+            else:
+                player_id = "guest"
+                self.data["players"]["guest"] = make_default_profile("guest", "Guest")
         p = self.data["players"][player_id]["fruit_ninja"]
         p["total_matches"] += 1
         p["total_sliced"] += sliced
@@ -275,7 +338,13 @@ class ProfileManager:
 
     def update_preferences(self, player_id, prefs):
         if player_id not in self.data["players"]:
-            player_id = "guest"
+            return
+        # Sanitize glove size preference (remove Custom, fallback to Normal)
+        if prefs.get("glove_size") == "Custom":
+            prefs["glove_size"] = "Normal"
+        elif prefs.get("glove_size") == "Extra Large":
+            prefs["glove_size"] = "Large"
+        prefs.pop("custom_glove_scale", None)
         self.data["players"][player_id]["preferences"].update(prefs)
         self.save()
 

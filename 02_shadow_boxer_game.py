@@ -465,14 +465,15 @@ def draw_boxing_glove(frame, wrist=None, elbow=None, is_left=True, speed=0.0, is
         ax = int(wx + proj_dist * math.cos(rad))
         ay = int(wy + proj_dist * math.sin(rad))
 
-    # Proportionate glove sizing: defaults to Large (1.30x +30%), Extra Large (1.45x), or Custom
-    size_setting = player_prefs.get("glove_size", "Large")
-    if size_setting == "Large":
-        size_mult = 1.30
-    elif size_setting == "Extra Large":
+    # Proportionate glove sizing: Normal (1.30x) or Large (1.45x)
+    size_setting = player_prefs.get("glove_size", "Normal")
+    if size_setting in ("Large", "Extra Large"):
         size_mult = 1.45
+    elif size_setting in ("Normal", "Standard"):
+        size_mult = 1.30
     else:
-        size_mult = player_prefs.get("custom_glove_scale", 1.30)
+        # Fallback to Normal (1.30x) if previously set to Custom or unmapped
+        size_mult = 1.30
 
     base_width = 120.0 * SCALE * size_mult
     g_scale = (base_width / 360.0) * (1.0 + scale_boost * 0.5)
