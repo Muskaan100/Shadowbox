@@ -1,46 +1,7 @@
 {
   "version": 1,
-  "last_active_player_id": "guest",
+  "last_active_player_id": "abinivesh",
   "players": {
-    "guest": {
-      "id": "guest",
-      "name": "Guest",
-      "created_at": 1794391452.8100636,
-      "preferences": {
-        "glove_size": "Large",
-        "glove_skin": "Classic Red",
-        "blade_color": "Cyan/Amber",
-        "music_volume": 0.7,
-        "sfx_volume": 0.85,
-        "master_mute": false,
-        "mic_sensitivity": 1.0,
-        "camera_blend": 0.35,
-        "fullscreen": false,
-        "difficulty": "EXPERT",
-        "auto_grip": false,
-        "completed_tutorial": true
-      },
-      "shadow_boxing": {
-        "high_score": 665,
-        "total_matches": 1,
-        "max_combo": 103,
-        "total_punches": 103,
-        "kiai_strikes": 2,
-        "bosses_defeated": 2,
-        "dodges_completed": 3,
-        "shields_deflected": 2,
-        "best_session_score": 665
-      },
-      "fruit_ninja": {
-        "classic_high_score": 156,
-        "zen_high_score": 0,
-        "arcade_high_score": 254,
-        "total_sliced": 217,
-        "max_combo": 4,
-        "bombs_hit": 60,
-        "total_matches": 22
-      }
-    },
     "abinivesh": {
       "id": "abinivesh",
       "name": "Abinivesh",
@@ -54,7 +15,7 @@
         "master_mute": false,
         "mic_sensitivity": 1.0,
         "camera_blend": 0.35,
-        "fullscreen": true,
+        "fullscreen": false,
         "completed_tutorial": true,
         "difficulty": "EXPERT",
         "auto_grip": false
@@ -74,10 +35,10 @@
         "classic_high_score": 156,
         "zen_high_score": 0,
         "arcade_high_score": 254,
-        "total_sliced": 67,
+        "total_sliced": 68,
         "max_combo": 3,
-        "bombs_hit": 22,
-        "total_matches": 22
+        "bombs_hit": 25,
+        "total_matches": 24
       }
     },
     "muskaan": {

@@ -186,7 +186,39 @@ class ArcadeLauncher:
                             self.show_player_modal = False
                             self.context_menu_open = False
                             self.context_menu_player = None
-                        elif event.key == pygame.K_RETURN:
+                        
+
+
+
+                elif event.key == pygame.K_RETURN:
+                    self.ui_audio.play("confirm")
+                    if self.player_input_text.strip():
+                        self.profile_mgr.create_player(self.player_input_text)
+                        # Close the modal after adding a new player
+                        self.show_player_modal = False
+                    self.player_input_text = ""
+
+                    self.ui_audio.play("confirm")
+                    if self.player_input_text.strip():
+                        self.profile_mgr.create_player(self.player_input_text)
+                        # Close the modal after adding a new player
+                        self.show_player_modal = False
+                    self.player_input_text = ""
+
+                    self.ui_audio.play("confirm")
+                    if self.player_input_text.strip():
+                        self.profile_mgr.create_player(self.player_input_text)
+                        # Close the modal after adding a new player
+                        self.show_player_modal = False
+                    self.player_input_text = ""
+
+                        self.ui_audio.play("confirm")
+                        if self.player_input_text.strip():
+                            self.profile_mgr.create_player(self.player_input_text)
+                            # Close the modal after adding a new player
+                            self.show_player_modal = False
+                        self.player_input_text = ""
+
                             self.ui_audio.play("confirm")
                             if self.player_input_text.strip():
                                 self.profile_mgr.create_player(self.player_input_text)
@@ -672,7 +704,21 @@ class ArcadeLauncher:
         conf_rect = pygame.Rect(mx + 438, my + 84, 138, 42)
         guest_rect = pygame.Rect(mx + 588, my + 84, 88, 42)
 
-        if conf_rect.collidepoint(pos):
+        
+            if conf_rect.collidepoint(pos):
+                self.ui_audio.play("confirm")
+                if self.player_input_text.strip():
+                    self.profile_mgr.create_player(self.player_input_text)
+                    # Close the modal after adding a new player to give visual feedback
+                    self.show_player_modal = False
+                self.player_input_text = ""
+                self.ui_audio.play("confirm")
+                if self.player_input_text.strip():
+                    self.profile_mgr.create_player(self.player_input_text)
+                    # Close modal after adding new player
+                    self.show_player_modal = False
+                self.player_input_text = ""
+
             self.ui_audio.play("confirm")
             if self.player_input_text.strip():
                 self.profile_mgr.create_player(self.player_input_text)
