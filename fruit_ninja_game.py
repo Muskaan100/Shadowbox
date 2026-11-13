@@ -337,6 +337,9 @@ class FruitNinjaGame:
         self.screen_shake_time = 0.0
         self.shake_magnitude = 0.0
         self.flash_alpha = 0.0
+        self.flash_surf = pygame.Surface((self.screen_w, self.screen_h))
+        self.flash_surf.fill((255, 255, 255))
+        self.gameover_time = 0.0
 
         # Slow motion effect (frozen fruit)
         self.slow_mo_timer = 0.0
@@ -469,9 +472,13 @@ class FruitNinjaGame:
         self.sliced_halves.clear()
         self.particles.clear()
         self.floating_scores.clear()
+        self.current_swipe_slices.clear()
         self.spawner = WaveSpawner(self.screen_w, self.screen_h)
         self.slow_mo_timer = 0.0
         self.time_scale = 1.0
+        self.screen_shake_time = 0.0
+        self.shake_magnitude = 0.0
+        self.flash_alpha = 0.0
 
         # Start with Countdown
         self.state = "COUNTDOWN"
@@ -480,6 +487,7 @@ class FruitNinjaGame:
 
     def trigger_game_over(self):
         self.state = "GAMEOVER"
+        self.gameover_time = time.time()
         self.audio.play_game_over()
         
         # Persist stats to active player profile
@@ -525,6 +533,7 @@ class FruitNinjaGame:
                 color = random.choice([(255, 120, 20), (255, 220, 40), (200, 200, 200), (50, 50, 50)])
                 self.particles.append(JuiceParticle(cx, cy, color, vx, vy, radius=random.uniform(4, 9), lifetime=random.uniform(0.5, 1.2), is_spark=True))
                 
+            self.current_swipe_slices.clear()
             if self.mode == "CLASSIC":
                 self.lives = 0
                 self.floating_scores.append(FloatingScore("BOMB! GAME OVER", cx, cy - 20, color=(255, 60, 60), scale=1.3))
@@ -533,7 +542,6 @@ class FruitNinjaGame:
                 penalty = 25
                 self.score = max(0, self.score - penalty)
                 self.floating_scores.append(FloatingScore(f"-{penalty} BOMB PENALTY", cx, cy - 20, color=(255, 80, 80), scale=1.2))
-                self.current_swipe_slices.clear()
             return
 
         # 2. NORMAL / SPECIAL FRUIT SLICE
@@ -764,6 +772,12 @@ class FruitNinjaGame:
                     self.prev_mouse = (mx, my)
                 else:
                     self.prev_mouse = pygame.mouse.get_pos()
+
+                # Global post-processing transitions (screen shake & bomb flash fade)
+                if self.screen_shake_time > 0:
+                    self.screen_shake_time = max(0.0, self.screen_shake_time - dt)
+                if self.flash_alpha > 0:
+                    self.flash_alpha = max(0.0, self.flash_alpha - dt * 450.0)
 
                 # 3. State-Specific Updates
                 if self.state == "MENU":
@@ -1006,10 +1020,29 @@ class FruitNinjaGame:
 
     def update_gameover(self, active_slices, dt):
         # Update lingering particles and halves
+        self.sliced_halves = [h for h in self.sliced_halves if not h.is_dead(self.screen_h)]
         for h in self.sliced_halves:
             h.update(dt)
+        self.particles = [p for p in self.particles if not p.is_dead()]
         for p in self.particles:
             p.update(dt)
+
+        # Update floating scores (e.g. "BOMB! GAME OVER")
+        self.floating_scores = [f for f in self.floating_scores if not f.is_dead()]
+        for f in self.floating_scores:
+            f.update(dt)
+
+        # Fade screen shake and flash in gameover (fail-safe)
+        if self.screen_shake_time > 0:
+            self.screen_shake_time = max(0.0, self.screen_shake_time - dt)
+        if self.flash_alpha > 0:
+            self.flash_alpha = max(0.0, self.flash_alpha - dt * 450.0)
+
+        # Allow restart via laser sword swing after brief grace period (0.8s)
+        if time.time() - getattr(self, "gameover_time", 0) > 0.8:
+            active_swords = self.tracker.get_active_swords() if self.tracker else []
+            if any(s.speed > 250 for s in active_swords):
+                self.start_game(self.mode)
 
     # -------------------------------------------------------------------------
     # RENDERING ENGINE
@@ -1126,10 +1159,11 @@ class FruitNinjaGame:
 
         # 11. Bomb Flash
         if self.flash_alpha > 0:
-            flash_surf = pygame.Surface((self.screen_w, self.screen_h))
-            flash_surf.fill((255, 255, 255))
-            flash_surf.set_alpha(int(self.flash_alpha))
-            render_surf.blit(flash_surf, (0, 0))
+            if not hasattr(self, "flash_surf") or self.flash_surf.get_size() != (self.screen_w, self.screen_h):
+                self.flash_surf = pygame.Surface((self.screen_w, self.screen_h))
+                self.flash_surf.fill((255, 255, 255))
+            self.flash_surf.set_alpha(min(255, max(0, int(self.flash_alpha))))
+            render_surf.blit(self.flash_surf, (0, 0))
 
         # Final Blit with Screen Shake
         self.screen.fill((0, 0, 0))

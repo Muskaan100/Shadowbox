@@ -50,9 +50,25 @@ def test_fruit_ninja_game_headless_lifecycle():
     assert game.bombs_hit == 1
     assert game.lives == 0
     assert game.state == "GAMEOVER"
+    assert game.flash_alpha == 255.0
+    assert game.screen_shake_time > 0
+
+    # Verify that bomb flash and screen shake fade out during GAMEOVER
+    for _ in range(15):
+        game.update_gameover([], 0.05)
+    assert game.flash_alpha == 0.0
+    assert game.screen_shake_time == 0.0
+
+    # Test rendering in GAMEOVER state after flash fades
+    game.render(None)
 
     # Test game over and high scores
     assert game.high_scores["CLASSIC"] >= 0
+
+    # Test restart resets screen effects
+    game.start_game("CLASSIC")
+    assert game.flash_alpha == 0.0
+    assert game.screen_shake_time == 0.0
 
     # Cleanup
     game.release_camera()
